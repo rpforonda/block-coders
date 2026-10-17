@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Block Coders
+GenericName=Coding Game
+Comment=A blocky coding adventure that teaches kids to think like programmers
+Exec=block-coders
+Icon=block-coders
+Terminal=false
+Categories=Game;LogicGame;KidsGame;
+Keywords=coding;programming;blocks;kids;logic;
+StartupWMClass=block-coders
