@@ -1,33 +1,117 @@
 //! Player profiles. Each player has their own stars and saved programs, so
 //! kids can share the game and pick up where they left off.
 //!
-//! Files (in ~/.local/share/block-coders/):
+//! Two entries, stored as files on desktop (in ~/.local/share/block-coders/) and
+//! in the browser's localStorage on the web (see `storage` below):
 //!   users.txt          one line per player: id ; shirt colour ; name
 //!   user-<id>.txt      that player's progress: level name ; stars ; program
+//!
+//! Everything read back is treated as untrusted. On the web, anyone can edit
+//! localStorage from the browser's dev tools, so loading validates and clamps
+//! every field and never panics on bad data.
 
 use crate::levels::{LEGACY_ORDER, LEVELS};
 use crate::program::Program;
-use std::path::PathBuf;
+use storage::{read, remove, write};
 
 pub const MAX_USERS: usize = 6;
 pub const MAX_NAME: usize = 12;
+/// Saves larger than this are ignored. Real ones are a few KB.
+pub const MAX_SAVE_BYTES: usize = 256 * 1024;
 
-fn data_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?;
-    Some(base.join("block-coders"))
+/// Desktop: one small text file per entry.
+#[cfg(not(target_arch = "wasm32"))]
+mod storage {
+    use std::path::PathBuf;
+
+    fn data_dir() -> Option<PathBuf> {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))?;
+        Some(base.join("block-coders"))
+    }
+
+    pub fn write(name: &str, contents: &str) {
+        let Some(dir) = data_dir() else { return };
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(name), contents);
+    }
+
+    pub fn read(name: &str) -> Option<String> {
+        let path = data_dir()?.join(name);
+        if std::fs::metadata(&path).ok()?.len() > super::MAX_SAVE_BYTES as u64 {
+            return None;
+        }
+        std::fs::read_to_string(path).ok()
+    }
+
+    pub fn remove(name: &str) {
+        if let Some(dir) = data_dir() {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+    }
 }
 
-fn write(name: &str, contents: &str) {
-    let Some(dir) = data_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join(name), contents);
+/// Web: the browser's localStorage, through the tiny JS plugin in web/storage.js.
+/// Data never leaves the player's device. Keys are prefixed with "block-coders/"
+/// on the JS side so they can't collide with other pages on the same origin.
+#[cfg(target_arch = "wasm32")]
+mod storage {
+    unsafe extern "C" {
+        /// Copies up to `buf_len` bytes of the value into `buf` and returns the
+        /// value's full length in bytes, or -1 if missing or unavailable.
+        fn bc_storage_get(key: *const u8, key_len: usize, buf: *mut u8, buf_len: usize) -> i32;
+        /// Returns 1 on success, 0 on failure (storage full or disabled).
+        fn bc_storage_set(key: *const u8, key_len: usize, val: *const u8, val_len: usize) -> i32;
+        fn bc_storage_remove(key: *const u8, key_len: usize);
+    }
+
+    /// miniquad compares this with the plugin's version on startup.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bc_storage_crate_version() -> u32 {
+        1
+    }
+
+    pub fn write(name: &str, contents: &str) {
+        if contents.len() > super::MAX_SAVE_BYTES {
+            return;
+        }
+        // SAFETY: both pointers come from live &str values with their exact
+        // lengths, and the JS side only reads that many bytes.
+        unsafe { bc_storage_set(name.as_ptr(), name.len(), contents.as_ptr(), contents.len()) };
+    }
+
+    pub fn read(name: &str) -> Option<String> {
+        // Ask for the length first, then copy into a buffer of exactly that size.
+        // SAFETY: a zero-length buffer is never written to.
+        let len = unsafe { bc_storage_get(name.as_ptr(), name.len(), std::ptr::null_mut(), 0) };
+        let len = usize::try_from(len).ok().filter(|&l| l <= super::MAX_SAVE_BYTES)?;
+        let mut buf = vec![0u8; len];
+        // SAFETY: `buf` is valid for `len` bytes, and JS writes at most `buf_len` bytes.
+        let got = unsafe { bc_storage_get(name.as_ptr(), name.len(), buf.as_mut_ptr(), buf.len()) };
+        if usize::try_from(got).ok()? != len {
+            return None; // changed in between (another tab); treat as unreadable this time
+        }
+        String::from_utf8(buf).ok()
+    }
+
+    pub fn remove(name: &str) {
+        // SAFETY: pointer and length come from a live &str.
+        unsafe { bc_storage_remove(name.as_ptr(), name.len()) };
+    }
 }
 
-fn read(name: &str) -> Option<String> {
-    std::fs::read_to_string(data_dir()?.join(name)).ok()
+/// Applies the same rules as typing a name in the New Player dialog, so a
+/// hand-edited save can't smuggle in odd characters or overlong names.
+pub fn clean_name(raw: &str) -> String {
+    let name: String = raw
+        .chars()
+        .filter(|&c| c.is_alphanumeric() || c == ' ' || c == '-' || c == '_')
+        .take(MAX_NAME)
+        .collect();
+    let name = name.trim();
+    if name.is_empty() { "Player".to_string() } else { name.to_string() }
 }
 
 fn user_file(id: u32) -> String {
@@ -55,8 +139,13 @@ impl Users {
                     let (Some(id), Some(shirt), Some(name)) = (parts.next(), parts.next(), parts.next()) else {
                         continue;
                     };
-                    let (Ok(id), Ok(shirt)) = (id.parse(), shirt.parse()) else { continue };
-                    users.list.push(User { id, name: name.to_string(), shirt });
+                    let (Ok(id), Ok(shirt)) = (id.trim().parse::<u32>(), shirt.trim().parse::<usize>()) else { continue };
+                    // id 0 is the guest; ids must be unique; never more than MAX_USERS.
+                    if id == 0 || users.list.iter().any(|u| u.id == id) || users.list.len() >= MAX_USERS {
+                        continue;
+                    }
+                    let shirt = shirt % crate::art::SHIRTS.len();
+                    users.list.push(User { id, name: clean_name(name), shirt });
                 }
             }
             None => {
@@ -88,9 +177,7 @@ impl Users {
     pub fn remove(&mut self, id: u32) {
         self.list.retain(|u| u.id != id);
         self.save();
-        if let Some(dir) = data_dir() {
-            let _ = std::fs::remove_file(dir.join(user_file(id)));
-        }
+        remove(&user_file(id));
     }
 }
 

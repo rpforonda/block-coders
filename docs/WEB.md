@@ -47,15 +47,17 @@ game side below is identical either way.
 
 ## Changes needed in the game
 
-1. **Saving.** Browsers have no file system. In `src/save.rs` all disk access
-   already goes through three tiny functions (`read`, `write`, and the
-   `remove_file` in `Users::remove`). For `cfg(target_arch = "wasm32")`, swap
-   those to `localStorage` using the keys `users.txt` and `user-<id>.txt`. Either
-   use the `quad-storage` crate (it adds a small JS plugin next to
-   `mq_js_bundle.js`) or write a ~30-line miniquad JS plugin with
-   `storage_get`/`storage_set`. Saves are per browser, and players can't share
-   progress between desktop and web unless we add an "export/import save code"
-   button later.
+1. **Saving. (Done.)** Browsers have no file system, so `src/save.rs` has two
+   `storage` backends chosen at compile time: files on desktop, and
+   `localStorage` on `wasm32` through the miniquad plugin in `web/storage.js`
+   (load it after `gl.js`). Keys are `block-coders/users.txt` and
+   `block-coders/user-<id>.txt`. Saves never leave the device: no network,
+   cookies or third parties. Everything loaded is treated as untrusted (anyone
+   can edit localStorage): names are re-cleaned, ids and shirts validated,
+   stars clamped, programs size- and depth-limited, and oversized values ignored.
+   If storage is blocked (some privacy modes) the game still runs, it just
+   doesn't remember progress. Saves are per browser; sharing between desktop and
+   web would need an "export/import save code" button later.
 2. **Native-only code.** Put `--write-icon`, `--version` and the `BC_SHOT`
    screenshot autopilot (in `main.rs`) behind `cfg(not(target_arch = "wasm32"))`.
 3. **Crisp rendering.** Consider `high_dpi: true` in `window_conf` so text is

@@ -1,0 +1,5 @@
+# The web build imports its graphics, audio and storage functions from JavaScript
+# (miniquad's gl.js, quad-snd's audio.js and web/storage.js), so the linker must
+# leave those symbols for the browser to provide.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--allow-undefined"]

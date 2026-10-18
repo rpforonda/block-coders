@@ -117,6 +117,9 @@ resized and the game scales to fit.
   to help.
 - Progress is saved in `~/.local/share/block-coders/`. To move a kid's
   progress to another computer, copy that folder.
+- In the web version, progress is saved in that browser's local storage on that
+  device only. Nothing is sent anywhere. Clearing the site's data in the browser
+  (or deleting the player) erases it.
 
 ## Project layout
 
