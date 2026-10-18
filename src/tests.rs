@@ -260,6 +260,14 @@ fn players_can_be_created_reset_and_deleted() {
     sp.save();
     assert!(Progress::load(sam).unlocked(1));
     assert_eq!(Users::load().list.len(), 2);
+    // Saves are swapped in whole (no temp files left over) and kept private.
+    let leftovers: Vec<_> = std::fs::read_dir(&data).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "tmp")).collect();
+    assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&data).unwrap().permissions().mode() & 0o777, 0o700);
+    }
 
     // Starting over wipes only that player.
     Progress::load(sam).reset();
@@ -287,6 +295,10 @@ fn tampered_saves_are_rejected_safely() {
     // Deep nesting must be refused, not overflow the stack.
     let deep = format!("{}F {}", "[R2 ".repeat(5000), "] ".repeat(5000));
     assert!(Program::deserialize(&deep).is_none());
+    // The depth limit on its own, well under the token limit: 32 deep loads, 33 doesn't.
+    let nest = |n: usize| format!("{}F {}", "[R2 ".repeat(n), "] ".repeat(n));
+    assert!(Program::deserialize(&nest(32)).is_some());
+    assert!(Program::deserialize(&nest(33)).is_none());
     // ...but ordinary nesting still loads.
     let ok = format!("{}F {}", "[R2 ".repeat(8), "] ".repeat(8));
     assert!(Program::deserialize(&ok).is_some());
