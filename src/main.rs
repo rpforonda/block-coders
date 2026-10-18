@@ -1,11 +1,13 @@
 //! Block Coders - a blocky coding adventure that teaches kids to think like programmers.
 
 mod art;
+mod check;
 mod editor;
 mod keyboard;
 mod levels;
 mod play;
 mod program;
+mod questions;
 mod save;
 mod sound;
 mod ui;
@@ -15,6 +17,7 @@ mod world;
 mod tests;
 
 use art::{draw_tex, Art};
+use check::{CheckOut, CheckScreen, CHECKS};
 use levels::{CHAPTERS, LEVELS};
 use macroquad::prelude::*;
 use play::{Nav, Play};
@@ -55,6 +58,14 @@ enum Screen {
     Users(UsersScreen),
     Select,
     Play(Box<Play>),
+    Check(Box<CheckScreen>),
+}
+
+/// What the level select screen asks for.
+enum SelectOut {
+    Back,
+    Level(usize),
+    Check(usize),
 }
 
 fn hash(x: i32, y: i32) -> u32 {
@@ -118,7 +129,6 @@ fn current_world(progress: &Progress) -> usize {
     (0..LEVELS.len()).rev().find(|&i| progress.unlocked(i)).map_or(0, |i| LEVELS[i].chapter)
 }
 
-/// Returns the level to open, or Some(usize::MAX) to go back to the player list.
 fn select_screen(
     ui: &mut Ui,
     art: &Art,
@@ -126,12 +136,12 @@ fn select_screen(
     progress: &mut Progress,
     user: &User,
     world: &mut usize,
-) -> Option<usize> {
+) -> Option<SelectOut> {
     menu_background(art);
     let mut out = None;
     if ui.button(Rect::new(20.0, 18.0, 170.0, 40.0), "< Switch player", rgb8(110, 110, 120), 20.0) {
         sfx.play(Sfx::Click);
-        out = Some(usize::MAX);
+        out = Some(SelectOut::Back);
     }
     shadow_text("Choose a level", 214.0, 16.0, 44.0, WHITE);
     draw_tex(art.player(user.shirt, Dir::Down), 640.0, 14.0, 36.0, 48.0, WHITE);
@@ -172,7 +182,15 @@ fn select_screen(
             star(r.x + r.w - 92.0, r.y + 20.0, 10.0, true);
             shadow_text(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, rgb8(255, 215, 40));
         } else {
-            shadow_text("Locked", r.x + 16.0, r.y + 68.0, 18.0, rgb8(150, 150, 150));
+            // Say why: a World Check to pass, or just levels still to beat.
+            let why = if ci == CHAPTERS.len() - 1 && progress.check_open(ci - 1) {
+                "Pass every World Check".to_string()
+            } else if ci > 0 && progress.check_open(ci - 1) {
+                format!("Pass the World {ci} Check")
+            } else {
+                "Locked".to_string()
+            };
+            shadow_text(&why, r.x + 16.0, r.y + 68.0, 18.0, rgb8(150, 150, 150));
         }
     }
 
@@ -191,7 +209,7 @@ fn select_screen(
             let c = rgb8(ch.color.0, ch.color.1, ch.color.2);
             if ui.button(b, "", c, 20.0) {
                 sfx.play(Sfx::Click);
-                out = Some(i);
+                out = Some(SelectOut::Level(i));
             }
             text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 14.0, b.w, 60.0), 56.0, WHITE, true);
             for s in 0..3 {
@@ -216,7 +234,47 @@ fn select_screen(
             text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0, b.w, 24.0), 22.0, rgb8(180, 180, 180), false);
         }
     }
+    // The World Check tile, after the world's last level.
+    let mut check_info = None;
+    if *world < CHECKS {
+        let n = levels.len();
+        let b = Rect::new(panel.x + 30.0 + (n % 5) as f32 * 168.0, panel.y + 80.0 + (n / 5) as f32 * 180.0, 148.0, 148.0);
+        let open = progress.check_open(*world);
+        let passed = progress.checks[*world];
+        if open {
+            let fill = if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) };
+            if ui.button(b, "", fill, 20.0) {
+                sfx.play(Sfx::Click);
+                out = Some(SelectOut::Check(*world));
+            }
+        } else {
+            bevel(b, rgb8(70, 70, 70));
+        }
+        // A clipboard with ticks.
+        let ink = if open { WHITE } else { rgb8(150, 150, 150) };
+        let (cx, cy) = (b.x + b.w / 2.0, b.y + 50.0);
+        draw_rectangle_lines(cx - 24.0, cy - 30.0, 48.0, 60.0, 4.0, ink);
+        draw_rectangle(cx - 10.0, cy - 36.0, 20.0, 10.0, ink);
+        for k in 0..3 {
+            let y = cy - 14.0 + k as f32 * 15.0;
+            draw_line(cx - 14.0, y, cx - 9.0, y + 5.0, 3.0, ink);
+            draw_line(cx - 9.0, y + 5.0, cx - 1.0, y - 5.0, 3.0, ink);
+            draw_rectangle(cx + 3.0, y - 1.0, 13.0, 3.0, ink);
+        }
+        let label = if passed { "Passed!" } else { "World Check" };
+        text_centered(label, Rect::new(b.x, b.y + 100.0, b.w, 30.0), 22.0, ink, open);
+        if ui.hover(b) {
+            check_info = Some(if !open {
+                "World Check: beat every level in this world first.".to_string()
+            } else if passed {
+                "World Check passed! Take it again any time for practice.".to_string()
+            } else {
+                format!("World Check: answer {} questions about {} to move on.", check::ASKED, ch.concept.to_lowercase())
+            });
+        }
+    }
     let info = match hovered {
+        _ if check_info.is_some() => check_info.unwrap_or_default(),
         Some(i) if LEVELS[i].is_random() => format!("Level {}: {}  (changes every time you play!)", i + 1, LEVELS[i].name),
         Some(i) => format!("Level {}: {}", i + 1, LEVELS[i].name),
         None => "Finish a level to unlock the next one.".to_string(),
@@ -267,6 +325,8 @@ async fn run() {
 
     // Developer autopilot: BC_SHOT=<dir> saves screenshots of a level being solved.
     let shot_dir = dev_env("BC_SHOT");
+    // BC_CHECK=<n> opens World Check n (0-based) instead of a level.
+    let shot_check: Option<usize> = dev_env("BC_CHECK").and_then(|s| s.parse().ok()).filter(|&c| c < CHECKS);
     let shot_level: usize = dev_env("BC_LEVEL").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut frame: u32 = 0;
     let mut finished_at: Option<u32> = None;
@@ -360,10 +420,11 @@ async fn run() {
             Screen::Select => {
                 let me = user.clone().unwrap_or(User { id: 0, name: "Guest".into(), shirt: 0 });
                 match select_screen(&mut ui, &art, &sfx, &mut progress, &me, &mut world_sel) {
-                    Some(usize::MAX) => next = Some(Screen::Users(UsersScreen::new(&users))),
-                    Some(i) => {
+                    Some(SelectOut::Back) => next = Some(Screen::Users(UsersScreen::new(&users))),
+                    Some(SelectOut::Level(i)) => {
                         next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, me.shirt))))
                     }
+                    Some(SelectOut::Check(c)) => next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, me.shirt)))),
                     None => {}
                 }
             }
@@ -378,6 +439,22 @@ async fn run() {
                     speed = p.speed();
                     let shirt = user.as_ref().map_or(0, |u| u.shirt);
                     next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, shirt))));
+                }
+                Nav::Check(c) => {
+                    speed = p.speed();
+                    let shirt = user.as_ref().map_or(0, |u| u.shirt);
+                    next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, shirt))));
+                }
+            },
+            Screen::Check(c) => match c.frame(&mut ui, &art, &sfx, &mut progress) {
+                CheckOut::Stay => {}
+                CheckOut::Back => {
+                    world_sel = c.chapter;
+                    next = Some(Screen::Select);
+                }
+                CheckOut::World(w) => {
+                    world_sel = w;
+                    next = Some(Screen::Select);
                 }
             },
         }
@@ -413,11 +490,17 @@ async fn run() {
                         progress.user = None; // never save autopilot runs
                         world_sel = current_world(&progress);
                     }
+                    if let Some(c) = shot_check {
+                        world_sel = c;
+                    }
                     screen = Screen::Select;
                 }
                 30 => {
                     shot("2d-select");
-                    screen = Screen::Play(Box::new(Play::new(shot_level, None, 2, 4)));
+                    screen = match shot_check {
+                        Some(c) => Screen::Check(Box::new(CheckScreen::new(c, &mut progress, 4))),
+                        None => Screen::Play(Box::new(Play::new(shot_level, None, 2, 4))),
+                    };
                 }
                 45 => {
                     shot("3-intro");

@@ -1,6 +1,7 @@
 //! The gameplay screen: the world, the block palette, run controls and popups.
 
 use crate::art::{draw_tex, shade, Art};
+use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
 
 /// How many changes Undo can go back.
@@ -46,6 +47,8 @@ pub enum Nav {
     Stay,
     Back,
     Goto(usize),
+    /// Take this world's World Check.
+    Check(usize),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -1059,7 +1062,13 @@ impl Play {
                 y += 40.0;
                 draw_rectangle(r.x + 30.0, y, r.w - 60.0, 184.0, rgb8(40, 80, 50));
                 shadow_text("What you learned:", r.x + 46.0, y + 12.0, 20.0, rgb8(160, 255, 170));
-                let lesson = if last {
+                let ch = self.level.chapter;
+                let world_end = !last && LEVELS[self.idx + 1].chapter != ch;
+                let lesson = if world_end && ch < CHECKS && !progress.checks[ch] {
+                    format!("{}\n\nYou finished {}! Pass the World Check to move on.", self.level.lesson, CHAPTERS[ch].name)
+                } else if world_end && !progress.unlocked(self.idx + 1) {
+                    format!("{}\n\nThe {} opens once every World Check is passed.", self.level.lesson, CHAPTERS[ch + 1].name)
+                } else if last {
                     format!("{}\n\nYou earned {} of {} stars. Keep going - maybe one day YOU'LL make games like this!", self.level.lesson, progress.total_stars(), LEVELS.len() * 3)
                 } else {
                     self.level.lesson.to_string()
@@ -1067,7 +1076,17 @@ impl Play {
                 paragraph(&lesson, r.x + 46.0, y + 42.0, r.w - 92.0, 19.0, WHITE);
                 let by = r.y + r.h - 68.0;
                 let mut out = None;
-                if !last && ui.button(Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0), "Next level >", rgb8(60, 170, 60), 24.0) {
+                // At the end of a world, the World Check comes before the next level.
+                let ch = self.level.chapter;
+                let world_end = !last && LEVELS[self.idx + 1].chapter != ch;
+                let take_check = world_end && ch < CHECKS && !progress.checks[ch];
+                let next_r = Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0);
+                if take_check {
+                    if ui.button(next_r, "World Check >", rgb8(225, 175, 40), 24.0) {
+                        sfx.play(Sfx::Click);
+                        out = Some(Nav::Check(ch));
+                    }
+                } else if !last && progress.unlocked(self.idx + 1) && ui.button(next_r, "Next level >", rgb8(60, 170, 60), 24.0) {
                     sfx.play(Sfx::Click);
                     out = Some(Nav::Goto(self.idx + 1));
                 }

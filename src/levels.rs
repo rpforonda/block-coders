@@ -94,7 +94,7 @@ const ALL_CONDS: &[Cond] = &[
 
 /// Fills in the fields most levels share, so each level below only lists
 /// what makes it special.
-const BASE: Level = Level {
+pub const BASE: Level = Level {
     name: "",
     chapter: 0,
     maps: &[],

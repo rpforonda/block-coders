@@ -13,6 +13,7 @@ installing, see the [README](../README.md).
 5. [The program model](#the-program-model)
 6. [Dynamic levels](#dynamic-levels)
 7. [Curriculum and level design](#curriculum-and-level-design)
+   - [World Checks](#world-checks)
 8. [The block editor](#the-block-editor)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
@@ -247,6 +248,33 @@ features at once. Examples:
   only turn right → spirals → roads that turn both ways → mazes → mazes with
   hazards.
 
+### World Checks
+
+At the end of each world (except the last), a **World Check** asks 10
+read-the-code questions about that world's idea. 8 right (75%) passes and opens
+the next world. Retries are unlimited.
+
+- **Questions are read-the-code, not recall.** Each one shows a short block
+  program, often with a small map, and asks what happens: where the miner ends
+  up, how many times something runs, which program reaches the portal, or which
+  program does the same thing. Questions live in `questions.rs`, 15 per world.
+- **Every answer is proven.** Each question names how to check it (`Proof`),
+  and `every_answer_is_right` runs the programs in the real VM. It fails if the
+  marked answer is wrong, or if a wrong choice is also right. Questions on maps
+  with random squares are checked in 300 versions of the map.
+- **Retries get new questions.** An attempt takes every question that wasn't in
+  the previous attempt first, then fills up from the rest. With 15 per bank, each
+  retry has at least 5 new questions. The last attempt's ids are saved, so this
+  holds across restarts too. Choices are shuffled every time.
+- **Unlocking:** world *w* opens when Check *w*−1 is passed. Saves from before
+  World Checks keep every world they had already reached, and can still take
+  the checks they skipped. The last world (Nether Fortress) needs **all** checks
+  passed, even for those older saves. A check opens once the world's last level
+  is beaten. Parent mode (Ctrl+U) opens everything.
+- `check.rs` has the screen, plus read-only drawing of programs and maps. Map
+  squares that change between versions show their symbol with a legend
+  ("? = stone or empty").
+
 ### Level design rules
 
 These come from bugs found while building the levels.
@@ -357,15 +385,16 @@ Files live in `$XDG_DATA_HOME/block-coders/` (usually
 ```
 users.txt        id;shirt;name           one line per player
 user-<id>.txt    level name;stars;program  one line per level
+                 check:<n>;<passed 0/1>;<last question ids>  one line per World Check
 ```
 
 - **Saved by level name, not number**, so levels can be inserted or reordered
   freely. Older saves that numbered levels 0–19 are converted on load using
   `LEGACY_ORDER`. An even older single-player `progress.txt` becomes "Player 1".
 - **Unlocking:** level *i* is open if it's level 1, or if *i* ≤ (furthest level
-  with stars) + 1. So beating a level opens everything before it, and new
-  levels added early in the list never lock out a player who already went
-  further.
+  with stars) + 1, and its world is open (see [World Checks](#world-checks)).
+  So beating a level opens everything before it, and new levels added early in
+  the list never lock out a player who already went further.
 - **Writes happen on every program edit and every win.** The files are tiny, and
   this means closing the window never loses work.
 - Players have up to 12 characters (letters, digits, space, `-`, `_`), and there
@@ -407,6 +436,11 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
+| `world_checks::every_answer_is_right` | Every World Check answer is right, and every wrong choice is wrong, by running the programs |
+| `world_checks::banks_are_big_enough_and_well_formed` | 13+ questions per bank, unique ids, programs parse, spots on the map |
+| `world_checks::retries_get_new_questions` | 10 different questions per attempt, at least 3 new on every retry |
+| `world_checks::checks_gate_the_next_world` | Check unlock rules, old saves, the last world needing every check |
+| `world_checks::check_results_are_saved` | Check results round-trip, and hand-edited entries are cleaned |
 
 **Screenshot autopilot** (development only: debug builds read these settings,
 release builds ignore them). Setting `BC_SHOT=<dir>` makes the game drive itself: the title, the player screens, a level (`BC_LEVEL=<index>`)
@@ -415,8 +449,9 @@ a run, and the result. It saves a PNG at each step. `BC_CLICK=x,y` injects a
 click after the run, which was used to reproduce and verify the tab-switching
 bug. `BC_INPUT="x,y,act;..."` plays one scripted mouse step per frame (`move`,
 `down`, `up`, `shot`, `dump`), which tests drag-and-drop and undo with real
-input handling. `dump` prints the program after each step. Set `XDG_DATA_HOME` to a temporary folder so test runs never touch real
-saves.
+input handling. `dump` prints the program after each step. `BC_CHECK=<n>`
+opens World Check n (0-based) instead of a level. Set `XDG_DATA_HOME` to a
+temporary folder so test runs never touch real saves.
 
 ## Key decisions
 
