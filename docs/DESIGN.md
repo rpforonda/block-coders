@@ -408,8 +408,8 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 
-**Screenshot autopilot** (development only). Setting `BC_SHOT=<dir>` makes the
-game drive itself: the title, the player screens, a level (`BC_LEVEL=<index>`)
+**Screenshot autopilot** (development only: debug builds read these settings,
+release builds ignore them). Setting `BC_SHOT=<dir>` makes the game drive itself: the title, the player screens, a level (`BC_LEVEL=<index>`)
 loaded with its solution (or with `BC_PROGRAM=<program string>`), the Rust view,
 a run, and the result. It saves a PNG at each step. `BC_CLICK=x,y` injects a
 click after the run, which was used to reproduce and verify the tab-switching

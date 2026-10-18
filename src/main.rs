@@ -242,6 +242,12 @@ fn main() {
     }
 }
 
+/// Reads a developer-only setting. Release builds (the installed game) ignore
+/// these, so nobody can make a player's copy drive itself or write screenshots.
+fn dev_env(name: &str) -> Option<String> {
+    if cfg!(debug_assertions) { std::env::var(name).ok() } else { None }
+}
+
 async fn run() {
     keyboard::detect_touch();
     let art = Art::new();
@@ -254,13 +260,13 @@ async fn run() {
     let mut world_sel = 0;
 
     // Developer autopilot: BC_SHOT=<dir> saves screenshots of a level being solved.
-    let shot_dir = std::env::var("BC_SHOT").ok();
-    let shot_level: usize = std::env::var("BC_LEVEL").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let shot_dir = dev_env("BC_SHOT");
+    let shot_level: usize = dev_env("BC_LEVEL").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut frame: u32 = 0;
     let mut finished_at: Option<u32> = None;
     // BC_INPUT="x,y,act;..." plays one mouse step per frame once the level's
     // program is loaded. act = move | down | up | shot | dump.
-    let input_script: Vec<(f32, f32, String)> = std::env::var("BC_INPUT")
+    let input_script: Vec<(f32, f32, String)> = dev_env("BC_INPUT")
         .unwrap_or_default()
         .split(';')
         .filter_map(|step| {
@@ -270,7 +276,7 @@ async fn run() {
         .collect();
     let mut held = false;
     let mut pending_shot = None;
-    let shot_click: Option<(f32, f32)> = std::env::var("BC_CLICK").ok().and_then(|s| {
+    let shot_click: Option<(f32, f32)> = dev_env("BC_CLICK").and_then(|s| {
         let (x, y) = s.split_once(',')?;
         Some((x.parse().ok()?, y.parse().ok()?))
     });

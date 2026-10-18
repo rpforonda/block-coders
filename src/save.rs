@@ -34,8 +34,21 @@ mod storage {
 
     pub fn write(name: &str, contents: &str) {
         let Some(dir) = data_dir() else { return };
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(name), contents);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        // Saves hold children's names, so keep them private to this account.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+        // Write a temporary file, then rename it over the old one, so a crash or
+        // power cut mid-save leaves either the old save or the new one, never half.
+        let tmp = dir.join(format!("{name}.tmp"));
+        if std::fs::write(&tmp, contents).and_then(|_| std::fs::rename(&tmp, dir.join(name))).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 
     pub fn read(name: &str) -> Option<String> {
