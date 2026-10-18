@@ -2,6 +2,7 @@
 
 mod art;
 mod editor;
+mod keyboard;
 mod levels;
 mod play;
 mod program;
@@ -242,6 +243,7 @@ fn main() {
 }
 
 async fn run() {
+    keyboard::detect_touch();
     let art = Art::new();
     let mut sfx = Sounds::load().await;
     let mut users = Users::load();
@@ -256,6 +258,18 @@ async fn run() {
     let shot_level: usize = std::env::var("BC_LEVEL").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut frame: u32 = 0;
     let mut finished_at: Option<u32> = None;
+    // BC_INPUT="x,y,act;..." plays one mouse step per frame once the level's
+    // program is loaded. act = move | down | up | shot | dump.
+    let input_script: Vec<(f32, f32, String)> = std::env::var("BC_INPUT")
+        .unwrap_or_default()
+        .split(';')
+        .filter_map(|step| {
+            let mut it = step.split(',');
+            Some((it.next()?.trim().parse().ok()?, it.next()?.trim().parse().ok()?, it.next()?.trim().to_string()))
+        })
+        .collect();
+    let mut held = false;
+    let mut pending_shot = None;
     let shot_click: Option<(f32, f32)> = std::env::var("BC_CLICK").ok().and_then(|s| {
         let (x, y) = s.split_once(',')?;
         Some((x.parse().ok()?, y.parse().ok()?))
@@ -277,6 +291,28 @@ async fn run() {
         });
         let (mx, my) = mouse_position();
         let mut ui = Ui::new(vec2((mx - ox) / scale, (my - oy) / scale));
+        keyboard::note_touches();
+        if let Some((x, y, act)) = frame.checked_sub(50).and_then(|i| input_script.get(i as usize)) {
+            ui.mouse = vec2(*x, *y);
+            match act.as_str() {
+                "down" => {
+                    ui.click = true;
+                    held = true;
+                }
+                "up" => {
+                    ui.release = true;
+                    held = false;
+                }
+                "shot" => pending_shot = Some(format!("input-{}", frame - 50)),
+                "dump" => {
+                    if let Screen::Play(p) = &screen {
+                        println!("program: {}", p.program.serialize());
+                    }
+                }
+                _ => {}
+            }
+            ui.down = held;
+        }
         // Autopilot: BC_CLICK=x,y clicks there 10 frames after the run finishes.
         if let (Some(f), Some((x, y))) = (finished_at, &shot_click) {
             if frame == f + 10 {
@@ -371,6 +407,14 @@ async fn run() {
                     shot("3-intro");
                     if let Screen::Play(p) = &mut screen {
                         p.debug_solve();
+                    }
+                }
+                f if f >= 50 && !input_script.is_empty() => {
+                    if let Some(name) = pending_shot.take() {
+                        shot(&name);
+                    }
+                    if f as usize >= 50 + input_script.len() {
+                        break;
                     }
                 }
                 60 => {

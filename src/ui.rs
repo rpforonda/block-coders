@@ -22,6 +22,9 @@ pub struct Ui {
     pub mouse: Vec2,
     pub click: bool,
     pub rclick: bool,
+    /// The left button was let go this frame / is held down (for dragging).
+    pub release: bool,
+    pub down: bool,
     pub wheel: f32,
     /// When false (e.g. behind a popup), nothing reacts to the mouse.
     pub enabled: bool,
@@ -34,6 +37,8 @@ impl Ui {
             mouse,
             click: is_mouse_button_pressed(MouseButton::Left),
             rclick: is_mouse_button_pressed(MouseButton::Right),
+            release: is_mouse_button_released(MouseButton::Left),
+            down: is_mouse_button_down(MouseButton::Left),
             wheel: mouse_wheel().1,
             enabled: true,
             clicked_any: false,

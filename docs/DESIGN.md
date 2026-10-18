@@ -281,23 +281,47 @@ new.
 
 ## The block editor
 
-The editor uses **click-to-insert with a cursor** instead of drag-and-drop:
+Kids can work either way: **click-to-insert** (click a palette block and it
+goes in at the yellow cursor) or **drag and drop** (drag from the palette, or
+drag blocks inside the program to reorder them).
 
-- Clicking a palette block inserts it at the yellow cursor. Inserting a
-  container (repeat/if/while) moves the cursor *inside* it, so the next click
-  fills the body. This is the most common next step.
-- Each frame, `layout()` walks the tree and makes a list of rows (block, `else`,
-  end cap) and **slots**: the gaps where a block could go. Every slot has a
-  unique y position, so a click selects the nearest slot. Empty bodies get
-  their own visible gap.
-- Edits from inline controls (the `x`, `−`/`+`, the condition label) are
-  collected as an `Edit` value during drawing and applied after it. This avoids
-  changing the tree while it's being read.
+- **Slots.** Each frame, `layout()` walks the tree and makes a list of rows
+  (block, `else`, end cap) and **slots**: the gaps where a block could go.
+  Every slot has a unique y position, so both clicks and drops simply pick the
+  nearest slot. Empty bodies get their own visible gap.
+- **Press, then decide.** Pressing on a palette block or a program block
+  starts a `Drag` that isn't active yet. If the mouse moves more than 6 pixels,
+  it becomes a real drag. If the button is let go first, it counts as a click
+  (insert at the cursor, or move the cursor). So clicking keeps working exactly
+  as before, and younger kids never *have* to drag.
+- **While dragging:** a ghost block follows the mouse, a green line marks the
+  drop slot, the original block is dimmed, and the list scrolls when you drag
+  near its top or bottom edge. Slots inside the dragged block are skipped, so a
+  container can't be dropped into itself. Hovering a MAIN/FUNCTION tab switches
+  to it, so blocks can move between them. Dropping a program block outside the
+  program panel deletes it (the ghost turns red and says "let go to delete").
+- **Moving safely.** `Editor::move_node` first inserts a placeholder node at the
+  target slot, then removes the dragged block from wherever it was, then
+  replaces the placeholder with it. Removing a block shifts the positions after
+  it, which would make a target path computed beforehand point at the wrong
+  spot. The placeholder doesn't care. Unit tests in `editor.rs` cover moving
+  down in the same list, into and out of containers and else parts, between
+  tabs, and moving a container with its children.
+- Inline controls (the `x`, `−`/`+`, the condition label) are handled before a
+  press can start a drag, and their edits are collected as an `Edit` value and
+  applied after drawing, so the tree is never changed while it's being read.
 
-Why not drag-and-drop? It's harder to do precisely with a laptop trackpad, and
-it's more code. Click-to-insert is easier for younger kids and keyboard-friendly
-(Enter, Backspace). Drag-and-drop could be added later, on top of the same slot
-system.
+### Undo and redo
+
+`Play` keeps two stacks of whole-program snapshots (programs are tiny, so
+copies are cheap). At the start of every frame it remembers the program. At
+the end, if the program changed (checked by comparing the save-format string),
+the old version goes onto the undo stack and the redo stack is cleared. This
+catches every kind of edit in one place, with no per-action bookkeeping: adds,
+drags, deletes, count and condition changes, Clear, and the parent "load
+solution" shortcut. Undo and Redo swap versions between the stacks and set a
+flag so the swap itself isn't recorded. History holds 100 steps and lasts while
+the level is open.
 
 **Following the running block:** while a program runs, the editor switches to
 the tab (MAIN or FUNCTION) that holds the highlighted block. It does this
@@ -380,6 +404,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `level_list_is_sane` | 60 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
+| `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 
@@ -388,7 +413,9 @@ game drive itself: the title, the player screens, a level (`BC_LEVEL=<index>`)
 loaded with its solution (or with `BC_PROGRAM=<program string>`), the Rust view,
 a run, and the result. It saves a PNG at each step. `BC_CLICK=x,y` injects a
 click after the run, which was used to reproduce and verify the tab-switching
-bug. Set `XDG_DATA_HOME` to a temporary folder so test runs never touch real
+bug. `BC_INPUT="x,y,act;..."` plays one scripted mouse step per frame (`move`,
+`down`, `up`, `shot`, `dump`), which tests drag-and-drop and undo with real
+input handling. `dump` prints the program after each step. Set `XDG_DATA_HOME` to a temporary folder so test runs never touch real
 saves.
 
 ## Key decisions
@@ -396,6 +423,8 @@ saves.
 | Decision | Alternatives | Why |
 |---|---|---|
 | macroquad | Bevy, ggez, egui | Small, fast to compile, simple immediate-mode 2D, built-in audio, and it builds for the web. Bevy's ECS is overkill for a grid game. |
+| Click-to-insert *and* drag-and-drop | Only one of them | Clicking is easier for young kids and trackpads. Dragging is faster and is what Scratch users expect. Both use the same slot system. |
+| Undo by whole-program snapshots | An undo entry per edit type | One generic check at the end of the frame can't miss a kind of edit, and programs are tiny. |
 | Fixed 1280×800 virtual canvas | Responsive layout | One layout to design and test, and it works at any window size via letterboxing. |
 | Procedural assets | Image/sound files | A single self-contained binary, nothing to lose or load, and the art is itself code kids can explore. |
 | Bytecode VM that pauses at actions | Walking the tree with recursion | Stepping, highlighting, animation and instant simulation all share one path. Infinite loops are easy to detect. |

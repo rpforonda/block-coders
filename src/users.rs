@@ -1,6 +1,7 @@
 //! "Who's playing?" - pick, create, reset or delete a player.
 
 use crate::art::{draw_tex, Art, SHIRTS};
+use crate::keyboard::{self, Key, Keyboard};
 use crate::levels::LEVELS;
 use crate::save::{Progress, Users, MAX_NAME, MAX_USERS};
 use crate::sound::{Sfx, Sounds};
@@ -25,6 +26,8 @@ pub struct UsersScreen {
     pub mode: Mode,
     /// (stars, levels done) for each player, in the same order as `Users::list`.
     stats: Vec<(u32, usize)>,
+    /// The on-screen keyboard for typing a name (open by default on touch screens).
+    kb: Keyboard,
 }
 
 const CARD_W: f32 = 360.0;
@@ -37,7 +40,7 @@ fn card_rect(i: usize) -> Rect {
 
 impl UsersScreen {
     pub fn new(users: &Users) -> UsersScreen {
-        let mut s = UsersScreen { mode: Mode::List, stats: Vec::new() };
+        let mut s = UsersScreen { mode: Mode::List, stats: Vec::new(), kb: Keyboard::new() };
         s.refresh(users);
         s
     }
@@ -100,6 +103,7 @@ impl UsersScreen {
             if ui.button(r, "", rgb8(50, 120, 60), 20.0) {
                 sfx.play(Sfx::Click);
                 self.mode = Mode::New { name: String::new(), shirt: n % SHIRTS.len() };
+                self.kb = Keyboard::new();
             }
             let (cx, cy) = (r.x + r.w / 2.0, r.y + 90.0);
             for (o, c) in [(4.0, rgb8(20, 60, 25)), (0.0, WHITE)] {
@@ -131,20 +135,37 @@ impl UsersScreen {
         match &mut self.mode {
             Mode::List => None,
             Mode::New { name, shirt } => {
-                while let Some(c) = get_char_pressed() {
+                let push = |name: &mut String, c: char| {
                     if (c.is_alphanumeric() || c == ' ' || c == '-' || c == '_') && name.chars().count() < MAX_NAME {
                         if !(c == ' ' && name.is_empty()) {
                             name.push(c);
                         }
                     }
+                };
+                while let Some(c) = get_char_pressed() {
+                    push(name, c);
                 }
                 if is_key_pressed(KeyCode::Backspace) {
                     name.pop();
                 }
-                let r = Rect::new(VW / 2.0 - 380.0, 150.0, 760.0, 480.0);
+                // With the keyboard showing, the popup moves up out of its way.
+                let r = if self.kb.open {
+                    Rect::new(VW / 2.0 - 380.0, keyboard::AREA.y - 470.0, 760.0, 460.0)
+                } else {
+                    Rect::new(VW / 2.0 - 380.0, 150.0, 760.0, 480.0)
+                };
+                if self.kb.open {
+                    match self.kb.frame(ui, sfx, name.is_empty()) {
+                        Some(Key::Char(c)) => push(name, c),
+                        Some(Key::Backspace) => {
+                            name.pop();
+                        }
+                        Some(Key::Hide) | None => {}
+                    }
+                }
                 panel(r);
                 shadow_text("New player", r.x + 30.0, r.y + 24.0, 38.0, rgb8(255, 215, 40));
-                text("Type your name:", r.x + 32.0, r.y + 86.0, 22.0, rgb8(40, 40, 40));
+                text(if self.kb.open { "Tap the letters to type your name:" } else { "Type your name:" }, r.x + 32.0, r.y + 86.0, 22.0, rgb8(40, 40, 40));
                 let field = Rect::new(r.x + 30.0, r.y + 116.0, r.w - 60.0, 56.0);
                 draw_rectangle(field.x, field.y, field.w, field.h, rgb8(30, 30, 38));
                 draw_rectangle_lines(field.x, field.y, field.w, field.h, 3.0, rgb8(255, 215, 40));
@@ -152,6 +173,15 @@ impl UsersScreen {
                 if (get_time() * 2.0).fract() < 0.5 {
                     let cx = field.x + 18.0 + text_width(name, 34.0);
                     draw_rectangle(cx, field.y + 12.0, 4.0, 32.0, WHITE);
+                }
+                if !self.kb.open {
+                    // Brings the on-screen keyboard back (also works without a touch screen).
+                    let b = Rect::new(field.x + field.w - 66.0, field.y + 8.0, 58.0, 40.0);
+                    if ui.button(b, "", rgb8(70, 110, 170), 20.0) {
+                        sfx.play(Sfx::Click);
+                        self.kb.open = true;
+                    }
+                    keyboard::keyboard_icon(b, WHITE);
                 }
 
                 text("Pick your miner:", r.x + 32.0, r.y + 196.0, 22.0, rgb8(40, 40, 40));

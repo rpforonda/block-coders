@@ -13,7 +13,11 @@ const END_H: f32 = 14.0;
 const EMPTY_H: f32 = 24.0;
 const INDENT: f32 = 18.0;
 const TAB_H: f32 = 36.0;
-const FOOTER_H: f32 = 44.0;
+const FOOTER_H: f32 = 80.0;
+/// How far (in pixels) the mouse must move before a press becomes a drag.
+const DRAG_START: f32 = 6.0;
+/// Temporary id used while moving a block (real ids count up from 1).
+const PLACEHOLDER: u32 = u32::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -162,12 +166,78 @@ enum Edit {
     Tab(Tab),
 }
 
+/// What is being dragged: a new block from the palette, or a block (with
+/// everything inside it) that's already in the program.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DragSource {
+    Palette(Kind),
+    Block(u32),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Drag {
+    source: DragSource,
+    start: Vec2,
+    /// False until the mouse moves far enough; a press-and-release without
+    /// moving is treated as a click.
+    active: bool,
+}
+
+/// What happened in the editor this frame.
+#[derive(Default)]
+pub struct EditorOut {
+    pub changed: bool,
+    pub undo: bool,
+    pub redo: bool,
+}
+
+/// Removes the block with this id from wherever it is in the tree.
+fn take_node(list: &mut Vec<Node>, id: u32) -> Option<Node> {
+    if let Some(i) = list.iter().position(|n| n.id == id) {
+        return Some(list.remove(i));
+    }
+    for n in list.iter_mut() {
+        if let Some(found) = take_node(&mut n.body, id) {
+            return Some(found);
+        }
+        if let Some(found) = take_node(&mut n.els, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn take(p: &mut Program, id: u32) -> Option<Node> {
+    take_node(&mut p.main, id).or_else(|| take_node(&mut p.func, id))
+}
+
+/// Finds which list (and position in it) holds the block with this id.
+fn locate(list: &[Node], path: LPath, id: u32) -> Option<(LPath, usize)> {
+    for (i, n) in list.iter().enumerate() {
+        if n.id == id {
+            return Some((path, i));
+        }
+        if let Some(found) = locate(&n.body, path.child(i, false), id) {
+            return Some(found);
+        }
+        if let Some(found) = locate(&n.els, path.child(i, true), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn locate_in(p: &Program, id: u32) -> Option<(LPath, usize)> {
+    locate(&p.main, LPath::root(Tab::Main), id).or_else(|| locate(&p.func, LPath::root(Tab::Func), id))
+}
+
 pub struct Editor {
     pub tab: Tab,
     pub cursor: Cursor,
     scroll: f32,
     follow_cursor: bool,
     last_highlight: Option<u32>,
+    drag: Option<Drag>,
 }
 
 impl Editor {
@@ -178,7 +248,31 @@ impl Editor {
             scroll: 0.0,
             follow_cursor: true,
             last_highlight: None,
+            drag: None,
         }
+    }
+
+    /// Called when the mouse goes down on a palette block. It becomes a drag
+    /// if the mouse moves, or a click (insert at the cursor) if it doesn't.
+    pub fn press_palette(&mut self, kind: Kind, mouse: Vec2) {
+        self.drag = Some(Drag { source: DragSource::Palette(kind), start: mouse, active: false });
+    }
+
+    /// Moves a block (and everything inside it) to `target`. A placeholder
+    /// marks the target first, so removing the block can't shift the spot.
+    fn move_node(&mut self, p: &mut Program, id: u32, target: &Cursor) -> bool {
+        let Some(list) = list_mut(p, &target.list) else { return false };
+        let index = target.index.min(list.len());
+        list.insert(index, Node { id: PLACEHOLDER, ..Node::new(Kind::Forward, Cond::PathAhead) });
+        let Some(node) = take(p, id) else {
+            take(p, PLACEHOLDER);
+            return false;
+        };
+        let Some((path, i)) = locate_in(p, PLACEHOLDER) else { return false };
+        list_mut(p, &path).unwrap()[i] = node;
+        self.cursor = Cursor { list: path, index: i + 1 };
+        self.follow_cursor = true;
+        true
     }
 
     /// Makes sure the cursor points somewhere real in the visible tab.
@@ -242,13 +336,23 @@ impl Editor {
         running: Option<u32>,
         error: Option<u32>,
         art: &Art,
-    ) -> bool {
+        can_undo_redo: (bool, bool),
+    ) -> EditorOut {
         let has_func = level.palette.contains(&Kind::Call);
         if !has_func {
             self.tab = Tab::Main;
         }
         self.validate(p);
         let mut edit = None;
+        if !ui.enabled {
+            self.drag = None;
+        }
+        if let Some(d) = self.drag.as_mut() {
+            if !d.active && ui.mouse.distance(d.start) > DRAG_START {
+                d.active = true;
+            }
+        }
+        let dragging = self.drag.filter(|d| d.active).map(|d| d.source);
 
         // Tabs
         dark_panel(area);
@@ -258,6 +362,11 @@ impl Editor {
                 let r = tab_r(i as f32);
                 let color = if self.tab == *t { kind_color(if *t == Tab::Main { Kind::Forward } else { Kind::Call }) } else { rgb8(80, 80, 90) };
                 if ui.button(r, name, color, 18.0) && self.tab != *t {
+                    edit = Some(Edit::Tab(*t));
+                }
+                // Hovering a tab while dragging switches to it, so blocks can
+                // move between MAIN and FUNCTION.
+                if dragging.is_some() && ui.hover(r) && self.tab != *t {
                     edit = Some(Edit::Tab(*t));
                 }
             }
@@ -273,9 +382,16 @@ impl Editor {
         layout(&root, LPath::root(self.tab), 0, &mut content_h, &mut rows, &mut slots);
         content_h += 40.0;
 
-        // Scrolling
+        // Scrolling (also when dragging near the top or bottom edge)
         if ui.hover(rows_area) && ui.wheel != 0.0 {
             self.scroll -= ui.wheel.signum() * 40.0;
+        }
+        if dragging.is_some() && ui.mouse.x >= area.x && ui.mouse.x <= area.x + area.w {
+            if ui.mouse.y < rows_area.y + 30.0 && ui.mouse.y > rows_area.y - 40.0 {
+                self.scroll -= 8.0;
+            } else if ui.mouse.y > rows_area.y + rows_area.h - 30.0 && ui.mouse.y < rows_area.y + rows_area.h + 40.0 {
+                self.scroll += 8.0;
+            }
         }
         if self.follow_cursor {
             if let Some(s) = slots.iter().find(|s| s.cur == self.cursor) {
@@ -308,7 +424,7 @@ impl Editor {
             let msg = if self.tab == Tab::Func {
                 "Build your function here. Then use CALL FUNCTION in MAIN to run it!"
             } else {
-                "Click a block on the left to add it here!"
+                "Click or drag a block from the left to add it here!"
             };
             paragraph(msg, area.x + 16.0, rows_area.y + 50.0, area.w - 32.0, 18.0, rgb8(170, 170, 185));
         }
@@ -391,6 +507,14 @@ impl Editor {
                     edit = Some(Edit::Delete(r.list.clone(), r.index));
                 }
             }
+            if ui.click && ui.hover(rect) {
+                // Press on a block: maybe the start of a drag (to move it).
+                ui.click = false;
+                self.drag = Some(Drag { source: DragSource::Block(node.id), start: ui.mouse, active: false });
+            }
+            if dragging == Some(DragSource::Block(node.id)) {
+                draw_rectangle(rect.x - 2.0, rect.y - 2.0, rect.w + 4.0, rect.h + 4.0, Color::new(0.1, 0.1, 0.12, 0.7));
+            }
             if Some(node.id) == running {
                 let c = Color::new(1.0, 1.0, 1.0, 0.6 + 0.4 * hl_pulse);
                 draw_rectangle_lines(rect.x - 4.0, rect.y - 4.0, rect.w + 8.0, rect.h + 8.0, 4.0, c);
@@ -401,9 +525,25 @@ impl Editor {
             }
         }
 
+        // While moving a block, it can't be dropped inside itself.
+        let inside_dragged = |s: &Slot| -> bool {
+            let Some(DragSource::Block(id)) = dragging else { return false };
+            let Some((list, i)) = rows.iter().find_map(|r| {
+                let n = list_ref(p, &r.list)?.get(r.index)?;
+                (r.kind == RowKind::Block && n.id == id).then(|| (r.list.clone(), r.index))
+            }) else {
+                return false;
+            };
+            let n = list.steps.len();
+            s.cur.list.tab == list.tab
+                && s.cur.list.steps.len() > n
+                && s.cur.list.steps[..n] == list.steps[..]
+                && s.cur.list.steps[n].0 == i
+        };
+
         // Cursor and hover preview.
         let nearest = if ui.hover(rows_area) {
-            slots.iter().min_by(|a, b| {
+            slots.iter().filter(|s| !inside_dragged(s)).min_by(|a, b| {
                 let da = (top + a.y - ui.mouse.y).abs();
                 let db = (top + b.y - ui.mouse.y).abs();
                 da.partial_cmp(&db).unwrap()
@@ -411,15 +551,21 @@ impl Editor {
         } else {
             None
         };
+        let drop_target = if dragging.is_some() { nearest.map(|s| s.cur.clone()) } else { None };
         if let Some(s) = nearest {
-            if s.cur != self.cursor && visible(top + s.y - 2.0, 4.0) {
+            if dragging.is_some() {
+                // Where the dragged block will land.
+                let y = top + s.y;
+                draw_rectangle(bx(s.depth), y - 4.0, bw(s.depth), 8.0, rgb8(80, 230, 110));
+                draw_triangle(vec2(bx(s.depth) - 10.0, y - 9.0), vec2(bx(s.depth) - 10.0, y + 9.0), vec2(bx(s.depth), y), rgb8(80, 230, 110));
+            } else if s.cur != self.cursor && visible(top + s.y - 2.0, 4.0) {
                 draw_rectangle(bx(s.depth), top + s.y - 2.0, bw(s.depth), 4.0, Color::new(1.0, 1.0, 0.3, 0.3));
             }
             if ui.clicked(rows_area) {
                 edit = Some(Edit::SetCursor(s.cur.clone()));
             }
         }
-        if let Some(s) = slots.iter().find(|s| s.cur == self.cursor) {
+        if let Some(s) = slots.iter().find(|s| s.cur == self.cursor).filter(|_| dragging.is_none()) {
             let y = top + s.y;
             if visible(y - 3.0, 6.0) {
                 let blink = ((get_time() * 3.0).sin() * 0.3 + 0.7) as f32;
@@ -437,7 +583,7 @@ impl Editor {
             text_centered("v more v", Rect::new(area.x, rows_area.y + rows_area.h - 12.0, area.w, 14.0), 14.0, rgb8(200, 200, 200), false);
         }
 
-        // Footer: block counter and clear button.
+        // Footer: block counter, undo/redo and clear.
         let fy = area.y + area.h - FOOTER_H;
         let used = p.block_count();
         let counter = match level.max_blocks {
@@ -447,12 +593,20 @@ impl Editor {
         let full = level.max_blocks.is_some_and(|m| used >= m);
         shadow_text(&counter, area.x + 12.0, fy + 6.0, 20.0, if full { rgb8(255, 120, 100) } else { WHITE });
         text(&format!("3 stars: {} or fewer", level.par), area.x + 12.0, fy + 26.0, 15.0, rgb8(255, 215, 80));
-        let clear = Rect::new(area.x + area.w - 92.0, fy + 6.0, 82.0, 30.0);
-        let mut changed = false;
-        if ui.button_if(!root.is_empty(), clear, "Clear", rgb8(170, 60, 60), 18.0) {
-            self.clear_tab(p);
-            changed = true;
+        let mut out = EditorOut::default();
+        let bw3 = (area.w - 32.0) / 3.0;
+        let brow = |i: f32| Rect::new(area.x + 8.0 + i * (bw3 + 8.0), fy + 44.0, bw3, 30.0);
+        if ui.button_if(can_undo_redo.0, brow(0.0), "Undo", rgb8(70, 110, 170), 18.0) {
+            out.undo = true;
         }
+        if ui.button_if(can_undo_redo.1, brow(1.0), "Redo", rgb8(70, 110, 170), 18.0) {
+            out.redo = true;
+        }
+        if ui.button_if(!root.is_empty(), brow(2.0), "Clear", rgb8(170, 60, 60), 18.0) {
+            self.clear_tab(p);
+            out.changed = true;
+        }
+        let mut changed = false;
 
         match edit {
             Some(Edit::Delete(list, i)) => {
@@ -486,6 +640,147 @@ impl Editor {
             }
             None => {}
         }
-        changed
+
+        // Finish a drag (or a click) when the mouse button is let go.
+        if let Some(d) = self.drag.filter(|_| ui.release || !ui.down) {
+            self.drag = None;
+            match (d.active, d.source) {
+                // A click on a palette block: add it at the cursor.
+                (false, DragSource::Palette(k)) => {
+                    if !full {
+                        self.insert(p, k, level);
+                        changed = true;
+                    }
+                }
+                // A click on a program block: move the cursor there.
+                (false, DragSource::Block(_)) => {
+                    if let Some(s) = nearest {
+                        self.cursor = s.cur.clone();
+                    }
+                }
+                (true, DragSource::Palette(k)) => {
+                    if let Some(t) = drop_target.filter(|_| !full) {
+                        self.cursor = t;
+                        self.insert(p, k, level);
+                        changed = true;
+                    }
+                }
+                (true, DragSource::Block(id)) => {
+                    if let Some(t) = drop_target {
+                        changed |= self.move_node(p, id, &t);
+                    } else if !ui.hover(area) {
+                        // Dropped outside the program: throw the block away.
+                        changed |= take(p, id).is_some();
+                    }
+                }
+            }
+        }
+
+        // The block being dragged follows the mouse, drawn on top of everything.
+        if let Some(src) = dragging {
+            let (kind, label) = match src {
+                DragSource::Palette(k) => (k, k.palette_label().to_string()),
+                DragSource::Block(id) => {
+                    let found = locate_in(p, id).and_then(|(l, i)| list_ref(p, &l).map(|l| (l[i].kind, l[i].body.len() + l[i].els.len())));
+                    match found {
+                        Some((k, 0)) => (k, k.palette_label().to_string()),
+                        Some((k, n)) => (k, format!("{} (+{n})", k.palette_label())),
+                        None => (Kind::Forward, String::new()),
+                    }
+                }
+            };
+            let trash = matches!(src, DragSource::Block(_)) && !ui.hover(area);
+            let g = Rect::new(ui.mouse.x - 20.0, ui.mouse.y - 15.0, 190.0, 30.0);
+            bevel(g, if trash { rgb8(150, 50, 50) } else { kind_color(kind) });
+            block_icon(kind, g.x + 4.0, g.y + 4.0, 22.0, art);
+            shadow_text(&label, g.x + 32.0, g.y + 7.0, 18.0, WHITE);
+            if trash {
+                shadow_text("let go to delete", g.x, g.y + 36.0, 16.0, rgb8(255, 150, 140));
+            }
+        }
+
+        out.changed |= changed;
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prog(s: &str) -> Program {
+        Program::deserialize(s).unwrap()
+    }
+
+    /// Moves the block at `from` (list path + index) to the slot `to`.
+    fn mv(src: &str, from: (LPath, usize), to: Cursor) -> String {
+        let mut p = prog(src);
+        let id = list_ref(&p, &from.0).unwrap()[from.1].id;
+        let mut e = Editor::new();
+        assert!(e.move_node(&mut p, id, &to));
+        p.serialize()
+    }
+
+    fn main_at(i: usize) -> Cursor {
+        Cursor { list: LPath::root(Tab::Main), index: i }
+    }
+
+    #[test]
+    fn reorder_within_a_list() {
+        let m = LPath::root(Tab::Main);
+        // Move down: the slot after "R" is index 3 before removing "F".
+        assert_eq!(mv("F L R", (m.clone(), 0), main_at(3)), "L R F /");
+        assert_eq!(mv("F L R", (m.clone(), 2), main_at(0)), "R F L /");
+        // Dropping right where it already is changes nothing.
+        assert_eq!(mv("F L R", (m.clone(), 1), main_at(1)), "F L R /");
+        assert_eq!(mv("F L R", (m, 1), main_at(2)), "F L R /");
+    }
+
+    #[test]
+    fn move_into_and_out_of_containers() {
+        let m = LPath::root(Tab::Main);
+        let body = m.child(0, false);
+        // Into a repeat's body.
+        assert_eq!(mv("[R3 F ] L", (m.clone(), 1), Cursor { list: body.clone(), index: 0 }), "[R3 L F ] /");
+        // Out of it, to the end of main.
+        assert_eq!(mv("[R3 L F ] R", (body, 0), main_at(2)), "[R3 F ] R L /");
+        // Into the else part of an if/else.
+        let els = m.child(0, true);
+        assert_eq!(mv("[E3 M | ] P", (m, 1), Cursor { list: els, index: 0 }), "[E3 M | P ] /");
+    }
+
+    #[test]
+    fn containers_move_with_their_children() {
+        let m = LPath::root(Tab::Main);
+        assert_eq!(mv("F [R2 M F ] L", (m, 1), main_at(0)), "[R2 M F ] F L /");
+    }
+
+    #[test]
+    fn move_between_main_and_function() {
+        let to_func = Cursor { list: LPath::root(Tab::Func), index: 1 };
+        assert_eq!(mv("C M / F", (LPath::root(Tab::Main), 1), to_func), "C /F M ");
+    }
+
+    #[test]
+    fn ids_stay_unique_after_moves() {
+        let mut p = prog("F [R2 M F ] L / R");
+        let mut e = Editor::new();
+        let id = p.main[2].id;
+        e.move_node(&mut p, id, &Cursor { list: LPath::root(Tab::Main).child(1, false), index: 1 });
+        let mut ids = Vec::new();
+        fn collect(l: &[Node], out: &mut Vec<u32>) {
+            for n in l {
+                out.push(n.id);
+                collect(&n.body, out);
+                collect(&n.els, out);
+            }
+        }
+        collect(&p.main, &mut ids);
+        collect(&p.func, &mut ids);
+        assert!(!ids.contains(&PLACEHOLDER));
+        let n = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
     }
 }

@@ -2,6 +2,9 @@
 
 use crate::art::{draw_tex, shade, Art};
 use crate::editor::{kind_color, Editor, Tab};
+
+/// How many changes Undo can go back.
+const HISTORY: usize = 100;
 use crate::levels::{Level, CHAPTERS, LEVELS};
 use crate::program::{contains, simulate, Action, Program, Step, Vm};
 use crate::save::Progress;
@@ -117,6 +120,11 @@ pub struct Play {
     stars: u8,
     shake: f32,
     shirt: usize,
+    /// Earlier and undone versions of the program, for Undo / Redo.
+    undo_stack: Vec<Program>,
+    redo_stack: Vec<Program>,
+    /// Set by undo/redo so that restoring a version isn't itself recorded.
+    restoring: bool,
     /// The highlighted block whose tab we last switched to.
     followed: Option<u32>,
 }
@@ -158,6 +166,9 @@ impl Play {
             stars: 0,
             shake: 0.0,
             shirt,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            restoring: false,
             followed: None,
         };
         p.reset_run();
@@ -498,6 +509,8 @@ impl Play {
     pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &mut Sounds, progress: &mut Progress) -> Nav {
         let dt = get_frame_time().min(0.1);
         self.update(dt, sfx, progress);
+        // Remember the program as it was, so any change this frame can be undone.
+        let before = self.program.clone();
         let mut nav = Nav::Stay;
         let modal_open = !matches!(self.modal, Modal::None);
 
@@ -513,6 +526,12 @@ impl Play {
             }
             let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
             let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+            if ctrl && is_key_pressed(KeyCode::Z) {
+                if shift { self.redo(progress, sfx) } else { self.undo(progress, sfx) }
+            }
+            if ctrl && is_key_pressed(KeyCode::Y) {
+                self.redo(progress, sfx);
+            }
             if ctrl && shift && is_key_pressed(KeyCode::S) {
                 if let Some(p) = Program::deserialize(self.level.solution) {
                     self.program = p;
@@ -578,7 +597,7 @@ impl Play {
         self.draw_guide(ui, art, sfx);
 
         // ---- Palette & controls ----
-        self.draw_palette(ui, art, sfx, progress);
+        self.draw_palette(ui, art, sfx);
 
         // ---- Editor ----
         // Show the tab holding the running (or failed) block, but only when that
@@ -594,9 +613,17 @@ impl Play {
                 }
             }
         }
-        if self.editor.draw(ui, &mut self.program, self.level, EDITOR, self.running_id, self.error_id, art) {
+        let history = (!self.undo_stack.is_empty(), !self.redo_stack.is_empty());
+        let out = self.editor.draw(ui, &mut self.program, self.level, EDITOR, self.running_id, self.error_id, art, history);
+        if out.changed {
             self.program_changed(progress);
             sfx.play(Sfx::Click);
+        }
+        if out.undo {
+            self.undo(progress, sfx);
+        }
+        if out.redo {
+            self.redo(progress, sfx);
         }
 
         // ---- Popups ----
@@ -607,7 +634,35 @@ impl Play {
         if let Some(n) = self.draw_modal(ui, art, sfx, progress) {
             nav = n;
         }
+
+        // Record this frame's change (if any) for Undo.
+        if !self.restoring && before.serialize() != self.program.serialize() {
+            self.undo_stack.push(before);
+            if self.undo_stack.len() > HISTORY {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+        self.restoring = false;
         nav
+    }
+
+    fn undo(&mut self, progress: &mut Progress, sfx: &Sounds) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(std::mem::replace(&mut self.program, prev));
+            self.restoring = true;
+            self.program_changed(progress);
+            sfx.play(Sfx::Click);
+        }
+    }
+
+    fn redo(&mut self, progress: &mut Progress, sfx: &Sounds) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(std::mem::replace(&mut self.program, next));
+            self.restoring = true;
+            self.program_changed(progress);
+            sfx.play(Sfx::Click);
+        }
     }
 
     fn program_changed(&mut self, progress: &mut Progress) {
@@ -826,7 +881,7 @@ impl Play {
             self.say(g, MsgKind::Info);
         }
         text(
-            "Enter = run   Right-click = delete block",
+            "Drag blocks to move them    Ctrl+Z = undo",
             r.x + r.w - 350.0,
             r.y + r.h - 32.0,
             15.0,
@@ -834,7 +889,7 @@ impl Play {
         );
     }
 
-    fn draw_palette(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress) {
+    fn draw_palette(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds) {
         let r = PALETTE;
         dark_panel(r);
         shadow_text("BLOCKS", r.x + 12.0, r.y + 9.0, 22.0, WHITE);
@@ -854,12 +909,8 @@ impl Play {
                 shadow_text(label, b.x + 38.0, b.y + 13.0, 20.0, WHITE);
             }
             if !full && ui.clicked(b) {
-                if self.state != RunState::Editing {
-                    self.reset_run();
-                }
-                self.editor.insert(&mut self.program, k, self.level);
-                self.program_changed(progress);
-                sfx.play(Sfx::Add);
+                // Click to add at the cursor, or drag it into place.
+                self.editor.press_palette(k, ui.mouse);
             } else if full && ui.clicked(b) {
                 self.say(
                     format!("You've used all {} blocks! Can you find a pattern and use a loop to make your program shorter?", self.level.max_blocks.unwrap()),
