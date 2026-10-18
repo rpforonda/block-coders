@@ -30,6 +30,12 @@ fn window_conf() -> Conf {
         window_width: VW as i32,
         window_height: VH as i32,
         window_resizable: true,
+        // Render at the device's real pixel density in browsers, so phones and
+        // tablets (2-3x screens) get sharp text instead of an upscaled blur.
+        // The main loop converts its letterbox viewport and text size to physical
+        // pixels with screen_dpi_scale(); input stays in logical pixels.
+        // Desktop keeps its current behaviour.
+        high_dpi: cfg!(target_arch = "wasm32"),
         icon: Some(miniquad::conf::Icon {
             small: art::icon_rgba(16).try_into().unwrap(),
             medium: art::icon_rgba(32).try_into().unwrap(),
@@ -286,13 +292,17 @@ async fn run() {
         let scale = (sw / VW).min(sh / VH);
         let (vw, vh) = (VW * scale, VH * scale);
         let (ox, oy) = ((sw - vw) / 2.0, (sh - vh) / 2.0);
-        set_scale(scale);
+        // screen_width() and mouse_position() are in logical pixels, but the
+        // viewport and text rasterizing work in physical pixels (2-3x on phones
+        // with high_dpi). dpi is 1.0 on desktop.
+        let dpi = screen_dpi_scale();
+        set_scale(scale * dpi);
         set_default_camera();
         clear_background(BLACK);
         set_camera(&Camera2D {
             target: vec2(VW / 2.0, VH / 2.0),
             zoom: vec2(2.0 / VW, 2.0 / VH),
-            viewport: Some((ox as i32, oy as i32, vw as i32, vh as i32)),
+            viewport: Some(((ox * dpi) as i32, (oy * dpi) as i32, (vw * dpi) as i32, (vh * dpi) as i32)),
             ..Default::default()
         });
         let (mx, my) = mouse_position();
