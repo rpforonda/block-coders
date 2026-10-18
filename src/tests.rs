@@ -217,9 +217,13 @@ fn find_mazes() {
     }
 }
 
+/// Tests that point XDG_DATA_HOME at a temp dir must not run at the same time.
+static SAVE_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn players_can_be_created_reset_and_deleted() {
     use crate::save::{Progress, Users};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("block-coders-test-{}", std::process::id()));
     let data = dir.join("block-coders");
     std::fs::create_dir_all(&data).unwrap();
@@ -269,5 +273,68 @@ fn players_can_be_created_reset_and_deleted() {
     // A new player never inherits a deleted player's file.
     let next = users.add("Alex", 0);
     assert_eq!(Progress::load(next).total_stars(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Saves are untrusted (on the web, anyone can edit localStorage), so loading
+/// must never panic and must clamp or drop anything malformed.
+#[test]
+fn tampered_saves_are_rejected_safely() {
+    // Program parser: byte-slicing a multi-byte character used to panic.
+    for bad in ["[é5 F ]", "[R", "[", "[R99999999999999999999 F ]", "[X1 F ]", "[I99 F ]", "F ] ]", "[E0 F ]"] {
+        assert!(Program::deserialize(bad).is_none(), "accepted {bad:?}");
+    }
+    // Deep nesting must be refused, not overflow the stack.
+    let deep = format!("{}F {}", "[R2 ".repeat(5000), "] ".repeat(5000));
+    assert!(Program::deserialize(&deep).is_none());
+    // ...but ordinary nesting still loads.
+    let ok = format!("{}F {}", "[R2 ".repeat(8), "] ".repeat(8));
+    assert!(Program::deserialize(&ok).is_some());
+    // Huge programs are refused.
+    assert!(Program::deserialize(&"F ".repeat(10_000)).is_none());
+    // Repeat counts are clamped to what the editor allows.
+    let p = Program::deserialize("[R0 F ] [R500 F ] /").unwrap();
+    assert_eq!((p.main[0].count, p.main[1].count), (1, 99));
+
+    // Names get the same cleanup as typing one in.
+    use crate::save::clean_name;
+    assert_eq!(clean_name("Sam"), "Sam");
+    assert_eq!(clean_name("<script>alert(1)</script>"), "scriptalert1");
+    assert_eq!(clean_name("ABCDEFGHIJKLMNOPQRSTUVWXYZ").chars().count(), crate::save::MAX_NAME);
+    assert_eq!(clean_name("\u{0}\u{7}\t;;"), "Player");
+    assert_eq!(clean_name("   "), "Player");
+}
+
+#[test]
+fn tampered_player_list_is_cleaned_on_load() {
+    use crate::save::{Progress, Users, MAX_USERS};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-tamper-{}", std::process::id()));
+    let data = dir.join("block-coders");
+    std::fs::create_dir_all(&data).unwrap();
+    let mut list = String::from("0;1;Guest\n1;999;A very long name indeed\n1;2;Duplicate\nx;1;Bad id\n2;-3;Bad shirt\n");
+    for id in 3..20 {
+        list.push_str(&format!("{id};1;P{id}\n"));
+    }
+    std::fs::write(data.join("users.txt"), list).unwrap();
+    // Out-of-range stars, unknown levels and garbage programs.
+    std::fs::write(data.join("user-1.txt"), "First Steps;250;F F\nNo Such Level;3;F\nFirst Steps;x;[é\n").unwrap();
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+
+    let users = Users::load();
+    assert!(users.list.len() <= MAX_USERS);
+    assert!(users.list.iter().all(|u| u.id != 0), "id 0 is reserved for the guest");
+    let mut ids: Vec<u32> = users.list.iter().map(|u| u.id).collect();
+    ids.dedup();
+    assert_eq!(ids.len(), users.list.len(), "ids must be unique");
+    let first = &users.list[0];
+    assert_eq!((first.id, first.name.as_str()), (1, "A very long"));
+    assert!(first.shirt < crate::art::SHIRTS.len());
+
+    let p = Progress::load(1);
+    assert!(p.stars.iter().all(|&s| s <= 3));
+    // An oversized save file is ignored rather than read into memory.
+    std::fs::write(data.join("user-2.txt"), "x".repeat(crate::save::MAX_SAVE_BYTES + 1)).unwrap();
+    assert_eq!(Progress::load(2).total_stars(), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }

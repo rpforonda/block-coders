@@ -259,14 +259,25 @@ fn ser(list: &[Node], s: &mut String) {
     }
 }
 
+/// Saved programs come from disk or browser storage, so they're untrusted:
+/// cap their size and nesting so a crafted save can't exhaust memory or the stack.
+const MAX_TOKENS: usize = 4000;
+const MAX_NESTING: usize = 32;
+
 fn parse_list(s: &str) -> Option<Vec<Node>> {
     let toks: Vec<&str> = s.split_whitespace().collect();
+    if toks.len() > MAX_TOKENS {
+        return None;
+    }
     let mut i = 0;
-    let list = parse_seq(&toks, &mut i)?;
+    let list = parse_seq(&toks, &mut i, 0)?;
     if i == toks.len() { Some(list) } else { None }
 }
 
-fn parse_seq(toks: &[&str], i: &mut usize) -> Option<Vec<Node>> {
+fn parse_seq(toks: &[&str], i: &mut usize, depth: usize) -> Option<Vec<Node>> {
+    if depth > MAX_NESTING {
+        return None;
+    }
     let mut out = Vec::new();
     while *i < toks.len() {
         let t = toks[*i];
@@ -282,9 +293,10 @@ fn parse_seq(toks: &[&str], i: &mut usize) -> Option<Vec<Node>> {
             "M" => simple(Kind::Mine),
             "P" => simple(Kind::Place),
             "C" => simple(Kind::Call),
-            _ if t.starts_with('[') && t.len() >= 3 => {
-                let arg: usize = t[2..].parse().ok()?;
-                let kind = match &t[1..2] {
+            _ if t.starts_with('[') => {
+                // `get` instead of slicing: a multi-byte character here must not panic.
+                let arg: usize = t.get(2..)?.parse().ok()?;
+                let kind = match t.get(1..2)? {
                     "R" => Kind::Repeat,
                     "I" => Kind::If,
                     "E" => Kind::IfElse,
@@ -297,13 +309,13 @@ fn parse_seq(toks: &[&str], i: &mut usize) -> Option<Vec<Node>> {
                 } else {
                     n.cond = *ALL_CONDS.get(arg)?;
                 }
-                n.body = parse_seq(toks, i)?;
+                n.body = parse_seq(toks, i, depth + 1)?;
                 if kind == Kind::IfElse {
                     if toks.get(*i) != Some(&"|") {
                         return None;
                     }
                     *i += 1;
-                    n.els = parse_seq(toks, i)?;
+                    n.els = parse_seq(toks, i, depth + 1)?;
                 }
                 if toks.get(*i) != Some(&"]") {
                     return None;
