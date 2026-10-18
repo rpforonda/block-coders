@@ -10,7 +10,9 @@
 //! localStorage from the browser's dev tools, so loading validates and clamps
 //! every field and never panics on bad data.
 
-use crate::levels::{LEGACY_ORDER, LEVELS};
+use crate::check::CHECKS;
+use crate::levels::{CHAPTERS, LEGACY_ORDER, LEVELS};
+use crate::questions::BANKS;
 use crate::program::Program;
 use storage::{read, remove, write};
 
@@ -200,12 +202,24 @@ pub struct Progress {
     pub stars: Vec<u8>,
     pub programs: Vec<Option<Program>>,
     pub unlock_all: bool,
+    /// Which World Checks are passed (one per world except the last).
+    pub checks: Vec<bool>,
+    /// The question ids of each check's most recent attempt, so a retry can
+    /// pick different ones.
+    pub check_last: Vec<Vec<String>>,
 }
 
 impl Progress {
     pub fn new(user: Option<u32>) -> Progress {
         let n = LEVELS.len();
-        Progress { user, stars: vec![0; n], programs: vec![None; n], unlock_all: false }
+        Progress {
+            user,
+            stars: vec![0; n],
+            programs: vec![None; n],
+            unlock_all: false,
+            checks: vec![false; CHECKS],
+            check_last: vec![Vec::new(); CHECKS],
+        }
     }
 
     pub fn load(user: u32) -> Progress {
@@ -216,6 +230,17 @@ impl Progress {
             let (Some(key), Some(s), Some(prog)) = (parts.next(), parts.next(), parts.next()) else {
                 continue;
             };
+            // World Checks: "check:<n>;<passed 0/1>;<last question ids>".
+            if let Some(c) = key.strip_prefix("check:") {
+                let Some(c) = c.trim().parse::<usize>().ok().filter(|&c| c < CHECKS) else { continue };
+                p.checks[c] = s.trim() == "1";
+                p.check_last[c] = prog
+                    .split(',')
+                    .filter(|id| BANKS[c].iter().any(|q| q.id == *id))
+                    .map(str::to_string)
+                    .collect();
+                continue;
+            }
             // Levels are saved by name. Old saves used the level's number back
             // when there were only 20 levels.
             let name = match key.trim().parse::<usize>() {
@@ -236,6 +261,9 @@ impl Progress {
             let prog = self.programs[i].as_ref().map(|p| p.serialize()).unwrap_or_default();
             out.push_str(&format!("{};{};{prog}\n", level.name, self.stars[i]));
         }
+        for c in 0..CHECKS {
+            out.push_str(&format!("check:{c};{};{}\n", self.checks[c] as u8, self.check_last[c].join(",")));
+        }
         write(&user_file(user), &out);
     }
 
@@ -245,11 +273,38 @@ impl Progress {
         self.save();
     }
 
-    /// Everything up to (and one past) the furthest level beaten is open. So new
-    /// levels added before a player's furthest level never lock them out.
+    /// Everything up to (and one past) the furthest level beaten is open, as
+    /// long as its world is open. So new levels added before a player's
+    /// furthest level never lock them out.
     pub fn unlocked(&self, i: usize) -> bool {
         let furthest = self.stars.iter().rposition(|&s| s > 0);
-        self.unlock_all || i == 0 || furthest.is_some_and(|f| i <= f + 1)
+        let reached = i == 0 || furthest.is_some_and(|f| i <= f + 1);
+        self.unlock_all || (reached && self.world_open(LEVELS[i].chapter))
+    }
+
+    /// Has the player beaten any level in world `c` or a later one?
+    fn reached_world(&self, c: usize) -> bool {
+        LEVELS.iter().zip(&self.stars).any(|(l, &s)| s > 0 && l.chapter >= c)
+    }
+
+    /// Is world `c` open? Each world needs the World Check before it, except
+    /// that saves from before World Checks keep the worlds they'd already
+    /// reached. The last world always needs every check passed.
+    pub fn world_open(&self, c: usize) -> bool {
+        if self.unlock_all || c == 0 {
+            true
+        } else if c == CHAPTERS.len() - 1 {
+            self.checks.iter().all(|&p| p)
+        } else {
+            self.checks[c - 1] || self.reached_world(c)
+        }
+    }
+
+    /// Can the player take World Check `c`? Once they've beaten the world's
+    /// last level (or got past the world some other way).
+    pub fn check_open(&self, c: usize) -> bool {
+        let last = LEVELS.iter().rposition(|l| l.chapter == c);
+        self.unlock_all || last.is_some_and(|i| self.stars[i] > 0) || self.reached_world(c + 1)
     }
 
     pub fn total_stars(&self) -> u32 {

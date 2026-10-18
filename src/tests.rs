@@ -246,8 +246,12 @@ fn players_can_be_created_reset_and_deleted() {
     assert!(old.programs[idx("The Long Hallway")].is_some());
     // New levels inserted before an old player's furthest level stay open.
     assert!(old.unlocked(idx("Zig Zag")) && old.unlocked(idx("Maybe a Stone")));
-    assert!(old.unlocked(idx("Deep Dark Gauntlet") + 1));
-    assert!(!old.unlocked(idx("Deep Dark Gauntlet") + 2));
+    // The next level is the first of the last world, which needs every World Check.
+    assert!(!old.unlocked(idx("Deep Dark Gauntlet") + 1));
+    let mut checked = Progress::load(9);
+    checked.checks.iter_mut().for_each(|c| *c = true);
+    assert!(checked.unlocked(idx("Deep Dark Gauntlet") + 1));
+    assert!(!checked.unlocked(idx("Deep Dark Gauntlet") + 2));
     // ...and saving writes names, which load back the same.
     old.save();
     assert!(std::fs::read_to_string(data.join("user-9.txt")).unwrap().contains("The Long Hallway;3;"));
@@ -349,4 +353,240 @@ fn tampered_player_list_is_cleaned_on_load() {
     std::fs::write(data.join("user-2.txt"), "x".repeat(crate::save::MAX_SAVE_BYTES + 1)).unwrap();
     assert_eq!(Progress::load(2).total_stars(), 0);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ------------------------------ World Checks ------------------------------
+
+mod world_checks {
+    use crate::check::{pick, run, world_for, Run, ASKED, CHECKS, PASS};
+    use crate::levels::{CHAPTERS, LEVELS};
+    use crate::program::Program;
+    use crate::questions::{Choices, End, Proof, Question, BANKS};
+    use crate::save::Progress;
+    use crate::world::Rng;
+
+    fn parse(q: &Question, src: &str) -> Program {
+        Program::deserialize(src).unwrap_or_else(|| panic!("{}: can't parse program {src:?}", q.id))
+    }
+
+    fn is_random(q: &Question) -> bool {
+        q.map.iter().any(|row| row.contains(['?', '!', '*', '$', '~', '&', 'p']))
+    }
+
+    /// Everything about how a run ended, for comparing two programs.
+    fn result(r: &Run) -> (End, (i32, i32), crate::world::Dir, u32, Vec<crate::world::Tile>) {
+        (r.end, r.world.pos, r.world.dir, r.world.blocks, r.world.tiles.clone())
+    }
+
+    fn the_program(q: &'static Question) -> Run {
+        assert!(!q.program.is_empty(), "{}: needs a program", q.id);
+        assert!(!is_random(q), "{}: this kind of question needs a map that never changes", q.id);
+        run(&parse(q, q.program), world_for(q, 0))
+    }
+
+    fn texts(q: &Question) -> &'static [&'static str] {
+        match q.choices {
+            Choices::Text(t) => t,
+            _ => panic!("{}: needs text choices", q.id),
+        }
+    }
+
+    #[test]
+    fn banks_are_big_enough_and_well_formed() {
+        assert_eq!(CHECKS, CHAPTERS.len() - 1, "one World Check per world except the last");
+        assert!(PASS as f32 >= ASKED as f32 * 0.75, "passing needs at least 75%");
+        let mut ids = std::collections::HashSet::new();
+        for (c, bank) in BANKS.iter().enumerate() {
+            // Each retry has to include at least 3 questions from outside the last attempt.
+            assert!(bank.len() >= ASKED + 3, "bank {c} has only {} questions", bank.len());
+            for q in *bank {
+                assert!(ids.insert(q.id), "duplicate question id {}", q.id);
+                assert!(!q.id.contains([',', ';']), "{}: ids are saved, so no , or ;", q.id);
+                let n = match q.choices {
+                    Choices::Text(t) => t.len(),
+                    Choices::Programs(p) => p.len(),
+                    Choices::Spots(s) => s.len(),
+                };
+                assert!((2..=4).contains(&n), "{}: needs 2 to 4 choices", q.id);
+                if let Choices::Text(t) = q.choices {
+                    let mut seen = std::collections::HashSet::new();
+                    assert!(t.iter().all(|x| seen.insert(*x)), "{}: two choices are the same", q.id);
+                }
+                if let Choices::Spots(s) = q.choices {
+                    let w = world_for(q, 0);
+                    for &(x, y) in s {
+                        assert!(x >= 0 && y >= 0 && x < w.w && y < w.h, "{}: spot ({x},{y}) is off the map", q.id);
+                    }
+                }
+                assert!(!q.explain.is_empty(), "{}: needs an explanation", q.id);
+                if !q.program.is_empty() {
+                    parse(q, q.program);
+                }
+                if let Choices::Programs(ps) = q.choices {
+                    for p in ps {
+                        parse(q, p);
+                    }
+                }
+                // The map must build (this panics on unknown symbols).
+                world_for(q, 0);
+            }
+        }
+    }
+
+    /// Runs every question's programs and checks the marked answer (always
+    /// the first choice) really is right, and the others really are wrong.
+    #[test]
+    fn every_answer_is_right() {
+        for q in BANKS.iter().flat_map(|b| b.iter()) {
+            match q.proof {
+                Proof::Count(what) => {
+                    let r = the_program(q);
+                    assert!(matches!(r.end, End::Wins | End::Unfinished), "{}: program fails with {:?}", q.id, r.end);
+                    let n = r.actions.iter().filter(|a| what.contains(a)).count();
+                    let t = texts(q);
+                    assert_eq!(t[0], n.to_string(), "{}: the count is {n}", q.id);
+                    assert!(t[1..].iter().all(|x| *x != n.to_string()), "{}: a wrong choice is also {n}", q.id);
+                }
+                Proof::Backpack => {
+                    let r = the_program(q);
+                    assert_eq!(texts(q)[0], r.world.blocks.to_string(), "{}: backpack ends with {}", q.id, r.world.blocks);
+                }
+                Proof::Ends(end) => {
+                    let r = the_program(q);
+                    assert_eq!(r.end, end, "{}: program ends with {:?}", q.id, r.end);
+                }
+                Proof::EndsAt => {
+                    let r = the_program(q);
+                    assert!(matches!(r.end, End::Wins | End::Unfinished), "{}: program fails with {:?}", q.id, r.end);
+                    let Choices::Spots(s) = q.choices else { panic!("{}: needs spot choices", q.id) };
+                    assert_eq!(s[0], r.world.pos, "{}: miner ends at {:?}", q.id, r.world.pos);
+                    assert!(!s[1..].contains(&r.world.pos), "{}: a wrong spot is the real end", q.id);
+                }
+                Proof::SameResult => {
+                    let target = result(&the_program(q));
+                    let Choices::Programs(ps) = q.choices else { panic!("{}: needs program choices", q.id) };
+                    for (i, p) in ps.iter().enumerate() {
+                        let same = result(&run(&parse(q, p), world_for(q, 0))) == target;
+                        assert_eq!(same, i == 0, "{}: choice {i} ({p}) {} the same", q.id, if same { "ends" } else { "doesn't end" });
+                    }
+                }
+                Proof::OnlyWinner => {
+                    let Choices::Programs(ps) = q.choices else { panic!("{}: needs program choices", q.id) };
+                    let seeds = if is_random(q) { 300 } else { 1 };
+                    for (i, p) in ps.iter().enumerate() {
+                        let prog = parse(q, p);
+                        let wins = (0..seeds).filter(|&s| run(&prog, world_for(q, s)).end == End::Wins).count();
+                        if i == 0 {
+                            assert_eq!(wins, seeds as usize, "{}: the answer ({p}) loses in some versions", q.id);
+                        } else {
+                            assert!(wins < seeds as usize, "{}: wrong choice {i} ({p}) wins every time", q.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retries_get_new_questions() {
+        let mut rng = Rng::new(7);
+        for bank in BANKS {
+            let mut last: Vec<String> = Vec::new();
+            for _ in 0..50 {
+                let qs = pick(bank, &last, &mut rng);
+                assert_eq!(qs.len(), ASKED);
+                let mut ids: Vec<&str> = qs.iter().map(|q| q.id).collect();
+                ids.sort();
+                ids.dedup();
+                assert_eq!(ids.len(), ASKED, "a question came up twice");
+                if !last.is_empty() {
+                    let new = qs.iter().filter(|q| !last.iter().any(|id| id == q.id)).count();
+                    assert!(new >= 3, "only {new} new questions on a retry");
+                }
+                last = qs.iter().map(|q| q.id.to_string()).collect();
+            }
+        }
+    }
+
+    fn first_of(c: usize) -> usize {
+        LEVELS.iter().position(|l| l.chapter == c).unwrap()
+    }
+    fn last_of(c: usize) -> usize {
+        LEVELS.iter().rposition(|l| l.chapter == c).unwrap()
+    }
+
+    #[test]
+    fn checks_gate_the_next_world() {
+        let master = CHAPTERS.len() - 1;
+        // A new player who has beaten all of world 1 must pass its check first.
+        let mut p = Progress::new(None);
+        for i in 0..=last_of(0) {
+            p.stars[i] = 3;
+        }
+        assert!(p.check_open(0));
+        assert!(!p.check_open(1));
+        assert!(!p.unlocked(first_of(1)));
+        p.checks[0] = true;
+        assert!(p.unlocked(first_of(1)));
+
+        // An old save already in world 3 keeps worlds 2 and 3 without the checks...
+        let mut old = Progress::new(None);
+        for i in 0..=first_of(2) {
+            old.stars[i] = 2;
+        }
+        assert!(old.unlocked(first_of(1)) && old.unlocked(first_of(2)));
+        assert!(old.check_open(0) && old.check_open(1), "they can still take the checks they skipped");
+        // ...but not a world it hasn't reached yet.
+        for i in 0..=last_of(2) {
+            old.stars[i] = 2;
+        }
+        assert!(!old.unlocked(first_of(3)), "world 4 still needs the world 3 check");
+        old.checks[2] = true;
+        assert!(old.unlocked(first_of(3)));
+
+        // The last world needs every check, even for a save that already beat it.
+        let mut done = Progress::new(None);
+        done.stars.iter_mut().for_each(|s| *s = 3);
+        assert!(done.unlocked(last_of(master - 1)), "earlier worlds stay open");
+        assert!(!done.unlocked(first_of(master)));
+        for c in 0..CHECKS - 1 {
+            done.checks[c] = true;
+        }
+        assert!(!done.unlocked(first_of(master)), "one check still missing");
+        done.checks[CHECKS - 1] = true;
+        assert!(done.unlocked(first_of(master)) && done.unlocked(last_of(master)));
+
+        // Parent mode (Ctrl+U) opens everything.
+        let mut parent = Progress::new(None);
+        parent.unlock_all = true;
+        assert!(parent.unlocked(first_of(master)) && parent.check_open(CHECKS - 1));
+    }
+
+    #[test]
+    fn check_results_are_saved() {
+        let _guard = super::SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("block-coders-checks-{}", std::process::id()));
+        let data = dir.join("block-coders");
+        std::fs::create_dir_all(&data).unwrap();
+        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+
+        let mut p = Progress::new(Some(5));
+        p.stars[0] = 3;
+        p.checks[1] = true;
+        p.check_last[1] = vec!["w2-01".into(), "w2-07".into()];
+        p.save();
+        let back = Progress::load(5);
+        assert_eq!(back.checks, p.checks);
+        assert_eq!(back.check_last[1], p.check_last[1]);
+        assert_eq!(back.stars[0], 3);
+
+        // Hand-edited or unknown entries are ignored, not trusted.
+        let text = std::fs::read_to_string(data.join("user-5.txt")).unwrap();
+        let text = text + "check:99;1;w1-01\ncheck:x;1;\ncheck:2;1;nope,w3-02,w1-01\n";
+        std::fs::write(data.join("user-5.txt"), text).unwrap();
+        let back = Progress::load(5);
+        assert!(back.checks[2]);
+        assert_eq!(back.check_last[2], vec!["w3-02".to_string()], "only real questions from that world");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
