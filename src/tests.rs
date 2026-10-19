@@ -288,6 +288,32 @@ fn players_can_be_created_reset_and_deleted() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The screenshot autopilot shows real players; nothing it does may change a save.
+#[test]
+fn read_only_saves_never_change() {
+    use crate::save::{set_read_only, Progress, Users};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-readonly-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+    let mut users = Users::load();
+    let ana = users.add("Ana", 0).unwrap();
+    let mut p = Progress::load(ana);
+    p.stars[0] = 3;
+    p.save();
+
+    set_read_only(true);
+    Progress::load(ana).reset();
+    let _ = users.add("Sam", 2);
+    users.remove(ana);
+    set_read_only(false);
+
+    let names: Vec<String> = Users::load().list.iter().map(|u| u.name.clone()).collect();
+    assert_eq!(names, ["Ana"]);
+    assert_eq!(Progress::load(ana).total_stars(), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Two browser tabs share one save store. A tab that loaded the player list
 /// earlier must not drop players the other tab added, or reuse their ids and
 /// wipe their stars.

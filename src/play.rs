@@ -185,7 +185,7 @@ impl Play {
     // Hooks for the screenshot autopilot (see BC_SHOT in main.rs).
     pub fn debug_solve(&mut self) {
         self.modal = Modal::None;
-        let src = std::env::var("BC_PROGRAM").unwrap_or_else(|_| self.level.solution.to_string());
+        let src = crate::dev_env("BC_PROGRAM").unwrap_or_else(|| self.level.solution.to_string());
         self.program = Program::deserialize(&src).unwrap_or_default();
     }
     pub fn debug_code(&mut self) {

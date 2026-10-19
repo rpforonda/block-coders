@@ -14,7 +14,8 @@ use crate::check::CHECKS;
 use crate::levels::{CHAPTERS, LEGACY_ORDER, LEVELS};
 use crate::questions::BANKS;
 use crate::program::Program;
-use storage::{read, remove, write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use storage::read;
 
 pub const MAX_USERS: usize = 6;
 pub const MAX_NAME: usize = 12;
@@ -114,6 +115,27 @@ mod storage {
     pub fn remove(name: &str) {
         // SAFETY: pointer and length come from a live &str.
         unsafe { bc_storage_remove(name.as_ptr(), name.len()) };
+    }
+}
+
+/// Set while the screenshot autopilot runs: it shows the real players, but its
+/// popups and runs must never change their saves (a stray real click on its
+/// "Start over" popup would otherwise wipe a player).
+static READ_ONLY: AtomicBool = AtomicBool::new(false);
+
+pub fn set_read_only(on: bool) {
+    READ_ONLY.store(on, Ordering::Relaxed);
+}
+
+fn write(name: &str, contents: &str) {
+    if !READ_ONLY.load(Ordering::Relaxed) {
+        storage::write(name, contents);
+    }
+}
+
+fn remove(name: &str) {
+    if !READ_ONLY.load(Ordering::Relaxed) {
+        storage::remove(name);
     }
 }
 
