@@ -366,7 +366,14 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   virtual coordinates.
 - **Sharp text when scaled.** `ui::text` renders fonts at the real on-screen
   pixel size (`font_size × scale`, `font_scale = 1/scale`), so text stays
-  sharp at any window size.
+  sharp at any window size. macroquad multiplies by the screen's pixel density
+  itself, so `scale` leaves density out.
+- **Font atlas growth.** macroquad 0.4.16 deletes its glyph texture as soon as
+  a new glyph makes it grow, while text queued earlier in the frame still uses
+  it, and miniquad 0.4.11 then re-binds the deleted texture from its cache. So
+  `ui::cache_glyphs` flushes queued drawing and clears miniquad's bindings
+  before any text with an uncached glyph, then caches the whole string before
+  drawing it. Remove this if macroquad fixes it upstream.
 - **Procedural art** (`art.rs`). Every texture is a 16×16 image built by a
   function of (x, y): hashed noise for grass and stone, sine patterns for
   animated water, lava and portal frames, and ASCII pixel-art for the miner,
@@ -417,7 +424,10 @@ user-<id>.txt    gen;<n>                 how many times this player started over
   and merges: stars and passed checks only go up, and a program or set of
   check questions this tab didn't change keeps the stored version. If the
   stored `gen` differs, the player started over elsewhere, so nothing is
-  written and this tab takes the stored progress instead. A player missing
+  written and this tab takes the stored progress instead (`Saved::StartedOverElsewhere`);
+  an open level swaps in the stored program too, or its next edit would save
+  the old one again. The merge baseline only moves on when a write works, so a
+  failed save (storage full) doesn't make the next one drop this tab's edits. A player missing
   from `users.txt` was deleted elsewhere and is never written back. The
   read-merge-write isn't atomic, but it runs in one go on each save, so two
   tabs would have to save in the same instant to collide.

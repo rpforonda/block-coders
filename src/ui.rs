@@ -2,6 +2,8 @@
 
 use crate::art::shade;
 use macroquad::prelude::*;
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The game is drawn in a fixed 1280x800 space and scaled to fit the window.
@@ -16,6 +18,45 @@ pub fn set_scale(s: f32) {
 
 fn scale() -> f32 {
     f32::from_bits(SCALE.load(Ordering::Relaxed))
+}
+
+thread_local! {
+    /// The (character, rasterized size) glyphs macroquad has cached so far. It
+    /// never forgets one, and all text goes through `text` and `text_width`.
+    static CACHED: RefCell<HashSet<(char, u16)>> = RefCell::new(HashSet::new());
+}
+
+/// macroquad 0.4.16 keeps glyphs in one font atlas texture. When a new glyph
+/// makes the atlas grow, it deletes the old texture straight away, while text
+/// already queued this frame (even earlier letters of the same string) still
+/// draws with it: "glBindTexture called with an already deleted texture".
+/// On top of that, miniquad 0.4.11 doesn't forget a deleted texture's binding,
+/// and creating the new atlas "restores" it, binding the deleted texture again.
+/// So before text with a glyph it hasn't cached, draw everything queued so far
+/// and clear miniquad's bindings, then cache the whole string before any of it
+/// is drawn. Text that's already cached (nearly all of it, after the first
+/// frames) costs a set lookup.
+fn cache_glyphs(s: &str, font_size: u16, font_scale: f32) {
+    let px = (font_size as f32 * screen_dpi_scale()).ceil() as u16; // as macroquad rasterizes it
+    let fresh = CACHED.with_borrow_mut(|cached| {
+        let before = cached.len();
+        cached.extend(s.chars().map(|c| (c, px)));
+        cached.len() != before
+    });
+    if fresh {
+        // SAFETY: only draws the batched calls (as set_camera does every frame)
+        // and unbinds textures (as miniquad does at the end of every frame).
+        let mut gl = unsafe { get_internal_gl() };
+        gl.flush();
+        gl.quad_context.commit_frame();
+        measure_text(s, None, font_size, font_scale);
+    }
+}
+
+/// The font size and scale to rasterize text of logical `size` sharply.
+fn font_params(size: f32) -> (u16, f32) {
+    let sc = scale();
+    ((size * sc).round().max(1.0) as u16, 1.0 / sc)
 }
 
 pub struct Ui {
@@ -117,14 +158,15 @@ pub fn dark_panel(r: Rect) {
 /// Draws text with its top-left corner at (x, y). Text is rendered at the real
 /// screen resolution so it stays sharp when the window is scaled.
 pub fn text(s: &str, x: f32, y: f32, size: f32, c: Color) {
-    let sc = scale();
+    let (font_size, font_scale) = font_params(size);
+    cache_glyphs(s, font_size, font_scale);
     draw_text_ex(
         s,
         x,
         y + size * 0.72,
         TextParams {
-            font_size: (size * sc).round().max(1.0) as u16,
-            font_scale: 1.0 / sc,
+            font_size,
+            font_scale,
             color: c,
             ..Default::default()
         },
@@ -138,8 +180,9 @@ pub fn shadow_text(s: &str, x: f32, y: f32, size: f32, c: Color) {
 }
 
 pub fn text_width(s: &str, size: f32) -> f32 {
-    let sc = scale();
-    measure_text(s, None, (size * sc).round().max(1.0) as u16, 1.0 / sc).width
+    let (font_size, font_scale) = font_params(size);
+    cache_glyphs(s, font_size, font_scale);
+    measure_text(s, None, font_size, font_scale).width
 }
 
 pub fn text_centered(s: &str, r: Rect, size: f32, c: Color, shadow: bool) {

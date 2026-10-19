@@ -314,6 +314,18 @@ fn read_only_saves_never_change() {
     assert_eq!(names, ["Ana"]);
     assert_eq!(Progress::load(ana).total_stars(), 3);
     let _ = std::fs::remove_dir_all(&dir);
+
+    // Loading can write too: an old single-player save becomes "Player 1".
+    // The autopilot turns read-only on first, so even that leaves no trace.
+    let data = dir.join("block-coders");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("progress.txt"), "0;3;F F F F /\n").unwrap();
+    set_read_only(true);
+    assert_eq!(Users::load().list.len(), 1);
+    set_read_only(false);
+    let files: Vec<_> = std::fs::read_dir(&data).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(files, ["progress.txt"]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Two browser tabs share one save store. A tab that loaded the player list
@@ -362,7 +374,7 @@ fn a_stale_tab_keeps_other_tabs_players() {
 /// progress into a new player.
 #[test]
 fn a_stale_tab_never_overwrites_newer_progress() {
-    use crate::save::{Progress, Users};
+    use crate::save::{Progress, Saved, Users};
     let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("block-coders-stale-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -394,6 +406,15 @@ fn a_stale_tab_never_overwrites_newer_progress() {
     let mut b = Progress::load(ana);
     Progress::load(ana).reset();
     b.stars[2] = 2;
+    b.programs[2] = prog("F F /");
+    assert_eq!(b.save(), Saved::StartedOverElsewhere);
+    // The play screen then shows the stored program, so its next edit can't
+    // bring the old one back.
+    assert!(b.programs[2].is_none());
+    b.programs[2] = prog("L /");
+    assert_eq!(b.save(), Saved::Done);
+    assert_eq!(Progress::load(ana).programs[2].as_ref().map(|p| p.serialize()), prog("L /").map(|p| p.serialize()));
+    b.programs[2] = None;
     b.save();
     let now = Progress::load(ana);
     assert_eq!(now.total_stars(), 0, "a stale tab undid Start over");
@@ -416,7 +437,23 @@ fn a_stale_tab_never_overwrites_newer_progress() {
     assert!(!dir.join("block-coders").join(format!("user-{ana}.txt")).exists(), "deleted player came back");
     // Deleting the newest player still doesn't free their id.
     users.remove(ben);
-    assert!(users.add("Cat", 2).unwrap() > ben);
+    let cat = users.add("Cat", 2).unwrap();
+    assert!(cat > ben);
+
+    // A save that fails (storage full, disk error) mustn't make the next save
+    // think the edit was stored: the win after it keeps the solution.
+    let mut p = Progress::load(cat);
+    p.programs[0] = prog("F F F F /");
+    let blocker = dir.join("block-coders").join(format!("user-{cat}.txt.tmp"));
+    std::fs::create_dir_all(&blocker).unwrap(); // the temp file can't be written
+    p.save();
+    std::fs::remove_dir(&blocker).unwrap();
+    assert!(Progress::load(cat).programs[0].is_none(), "the failed save shouldn't have landed");
+    p.stars[0] = 3;
+    p.save();
+    let now = Progress::load(cat);
+    assert_eq!(now.stars[0], 3);
+    assert_eq!(now.programs[0].as_ref().map(|p| p.serialize()), prog("F F F F /").map(|p| p.serialize()), "the solution was lost");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

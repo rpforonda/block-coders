@@ -41,10 +41,11 @@ mod storage {
         Some(base.join("block-coders"))
     }
 
-    pub fn write(name: &str, contents: &str) {
-        let Some(dir) = data_dir() else { return };
+    /// Returns whether the save was written.
+    pub fn write(name: &str, contents: &str) -> bool {
+        let Some(dir) = data_dir() else { return false };
         if std::fs::create_dir_all(&dir).is_err() {
-            return;
+            return false;
         }
         // Saves hold children's names, so keep them private to this account.
         #[cfg(unix)]
@@ -55,9 +56,11 @@ mod storage {
         // Write a temporary file, then rename it over the old one, so a crash or
         // power cut mid-save leaves either the old save or the new one, never half.
         let tmp = dir.join(format!("{name}.tmp"));
-        if std::fs::write(&tmp, contents).and_then(|_| std::fs::rename(&tmp, dir.join(name))).is_err() {
+        let ok = std::fs::write(&tmp, contents).and_then(|_| std::fs::rename(&tmp, dir.join(name))).is_ok();
+        if !ok {
             let _ = std::fs::remove_file(&tmp);
         }
+        ok
     }
 
     pub fn read(name: &str) -> Option<String> {
@@ -95,13 +98,14 @@ mod storage {
         1
     }
 
-    pub fn write(name: &str, contents: &str) {
+    /// Returns whether the save was written.
+    pub fn write(name: &str, contents: &str) -> bool {
         if contents.len() > super::MAX_SAVE_BYTES {
-            return;
+            return false;
         }
         // SAFETY: both pointers come from live &str values with their exact
         // lengths, and the JS side only reads that many bytes.
-        unsafe { bc_storage_set(name.as_ptr(), name.len(), contents.as_ptr(), contents.len()) };
+        unsafe { bc_storage_set(name.as_ptr(), name.len(), contents.as_ptr(), contents.len()) == 1 }
     }
 
     pub fn read(name: &str) -> Option<String> {
@@ -133,10 +137,9 @@ pub fn set_read_only(on: bool) {
     READ_ONLY.store(on, Ordering::Relaxed);
 }
 
-fn write(name: &str, contents: &str) {
-    if !READ_ONLY.load(Ordering::Relaxed) {
-        storage::write(name, contents);
-    }
+/// Returns whether the save was written (never while read-only).
+fn write(name: &str, contents: &str) -> bool {
+    !READ_ONLY.load(Ordering::Relaxed) && storage::write(name, contents)
 }
 
 fn remove(name: &str) {
@@ -206,7 +209,7 @@ impl Users {
             None => {
                 // Older versions had a single shared save; keep it as the first player.
                 if let Some(old) = read("progress.txt") {
-                    write(&user_file(1), &old);
+                    let _ = write(&user_file(1), &old);
                     users.list.push(User { id: 1, name: "Player 1".into(), shirt: 0 });
                     users.next_id = 2;
                     users.save();
@@ -221,7 +224,7 @@ impl Users {
     fn save(&self) {
         let mut text: String = self.list.iter().map(|u| format!("{};{};{}\n", u.id, u.shirt, u.name)).collect();
         text.push_str(&format!("next;{}\n", self.next_id));
-        write("users.txt", &text);
+        let _ = write("users.txt", &text);
     }
 
     /// Is this player still in the stored list? Another tab may have deleted them.
@@ -259,6 +262,17 @@ impl Users {
         self.save();
         remove(&user_file(id));
     }
+}
+
+/// What happened to a `Progress::save`.
+#[derive(Debug, PartialEq)]
+pub enum Saved {
+    /// Saved, or skipped (a guest, a player deleted elsewhere, storage failing).
+    Done,
+    /// The player started over in another tab or window since this copy was
+    /// loaded. Nothing was written, and this copy now holds the stored
+    /// progress, so a screen showing one of its programs must show that instead.
+    StartedOverElsewhere,
 }
 
 pub struct Progress {
@@ -349,17 +363,17 @@ impl Progress {
     /// programs this tab didn't touch keep the stored version. If the player
     /// started over or was deleted elsewhere, nothing is written and this copy
     /// is brought up to date instead, so a stale tab can't undo either.
-    pub fn save(&mut self) {
-        let Some(user) = self.user else { return };
+    pub fn save(&mut self) -> Saved {
+        let Some(user) = self.user else { return Saved::Done };
         if !Users::listed(user) {
-            return;
+            return Saved::Done;
         }
         let stored = Progress::load(user);
         if stored.generation != self.generation {
             let unlock_all = self.unlock_all;
             *self = stored;
             self.unlock_all = unlock_all;
-            return;
+            return Saved::StartedOverElsewhere;
         }
         for i in 0..LEVELS.len() {
             self.stars[i] = self.stars[i].max(stored.stars[i]);
@@ -374,9 +388,13 @@ impl Progress {
             }
         }
         self.write_out(user);
+        Saved::Done
     }
 
-    fn write_out(&mut self, user: u32) {
+    /// Writes this copy as it is. The merge baseline only moves on when the
+    /// write worked: otherwise the next save would think this tab's unsaved
+    /// changes were already stored and take the older stored programs instead.
+    fn write_out(&mut self, user: u32) -> bool {
         let mut out = format!("gen;{}\n", self.generation);
         for (i, level) in LEVELS.iter().enumerate() {
             out.push_str(&format!("{};{};{}\n", level.name, self.stars[i], self.program_text(i)));
@@ -384,8 +402,11 @@ impl Progress {
         for c in 0..CHECKS {
             out.push_str(&format!("check:{c};{};{}\n", self.checks[c] as u8, self.check_last[c].join(",")));
         }
-        write(&user_file(user), &out);
-        self.rebase();
+        let ok = write(&user_file(user), &out);
+        if ok {
+            self.rebase();
+        }
+        ok
     }
 
     /// Wipes all stars and programs so the player starts from level 1 again.
@@ -394,7 +415,9 @@ impl Progress {
         let Some(user) = self.user else { return };
         if Users::listed(user) {
             self.generation = Progress::load(user).generation.wrapping_add(1);
-            self.write_out(user);
+            if !self.write_out(user) {
+                *self = Progress::load(user); // didn't happen; don't pretend it did
+            }
         }
     }
 

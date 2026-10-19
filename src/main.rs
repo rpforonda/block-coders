@@ -317,13 +317,6 @@ async fn run() {
     keyboard::detect_touch();
     let art = Art::new();
     let mut sfx = Sounds::load().await;
-    let mut users = Users::load();
-    let mut user: Option<User> = None;
-    let mut progress = Progress::new(None);
-    let mut screen = Screen::Title;
-    let mut speed = 1;
-    let mut world_sel = 0;
-
     // Developer autopilot: BC_SHOT=<dir> saves screenshots of a level being solved.
     let shot_dir = dev_env("BC_SHOT").filter(|dir| {
         // Say so loudly: a BC_SHOT left in the shell (e.g. a fish universal
@@ -331,9 +324,18 @@ async fn run() {
         eprintln!("BC_SHOT={dir}: running the screenshot autopilot. Saves are read-only. Unset BC_SHOT to play normally.");
         std::fs::create_dir_all(dir).map_err(|e| eprintln!("BC_SHOT: can't create {dir}: {e}")).is_ok()
     });
+    // Before anything loads: loading can write too (an old single-player save
+    // is migrated to "Player 1" on the first load).
     if shot_dir.is_some() {
         save::set_read_only(true);
     }
+    let mut users = Users::load();
+    let mut user: Option<User> = None;
+    let mut progress = Progress::new(None);
+    let mut screen = Screen::Title;
+    let mut speed = 1;
+    let mut world_sel = 0;
+
     // BC_CHECK=<n> opens World Check n (0-based) instead of a level.
     let shot_check: Option<usize> = dev_env("BC_CHECK").and_then(|s| s.parse().ok()).filter(|&c| c < CHECKS);
     let shot_level: usize = dev_env("BC_LEVEL").and_then(|s| s.parse().ok()).unwrap_or(0);
