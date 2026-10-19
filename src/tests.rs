@@ -257,7 +257,7 @@ fn players_can_be_created_reset_and_deleted() {
     assert!(std::fs::read_to_string(data.join("user-9.txt")).unwrap().contains("The Long Hallway;3;"));
     assert_eq!(Progress::load(9).total_stars(), 5);
 
-    let sam = users.add("Sam", 2);
+    let sam = users.add("Sam", 2).unwrap();
     let mut sp = Progress::load(sam);
     assert_eq!(sp.total_stars(), 0);
     sp.stars[0] = 3;
@@ -283,8 +283,49 @@ fn players_can_be_created_reset_and_deleted() {
     users.remove(sam);
     assert_eq!(Users::load().list.len(), 1);
     // A new player never inherits a deleted player's file.
-    let next = users.add("Alex", 0);
+    let next = users.add("Alex", 0).unwrap();
     assert_eq!(Progress::load(next).total_stars(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two browser tabs share one save store. A tab that loaded the player list
+/// earlier must not drop players the other tab added, or reuse their ids and
+/// wipe their stars.
+#[test]
+fn a_stale_tab_keeps_other_tabs_players() {
+    use crate::save::{Progress, Users, MAX_USERS};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-tabs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+
+    let mut tab_a = Users::load();
+    tab_a.add("Ana", 0).unwrap();
+    let mut tab_b = Users::load();
+    let ben = tab_a.add("Ben", 1).unwrap();
+    let mut p = Progress::load(ben);
+    p.stars[0] = 3;
+    p.save();
+
+    let cat = tab_b.add("Cat", 2).unwrap();
+    assert_ne!(cat, ben);
+    let names: Vec<String> = Users::load().list.iter().map(|u| u.name.clone()).collect();
+    assert_eq!(names, ["Ana", "Ben", "Cat"]);
+    assert_eq!(Progress::load(ben).total_stars(), 3);
+    // A name another tab already took is refused, whatever case it's typed in.
+    assert!(tab_a.add("cat", 3).is_none());
+    // Deleting from a stale tab keeps everyone else.
+    let mut tab_c = Users::load();
+    tab_a.add("Dee", 3).unwrap();
+    tab_c.remove(cat);
+    let names: Vec<String> = Users::load().list.iter().map(|u| u.name.clone()).collect();
+    assert_eq!(names, ["Ana", "Ben", "Dee"]);
+    // A full list (filled by another tab) refuses new players.
+    for n in ["Eve", "Fay", "Gus"] {
+        tab_a.add(n, 0).unwrap();
+    }
+    assert_eq!(Users::load().list.len(), MAX_USERS);
+    assert!(tab_c.add("Hal", 0).is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -388,6 +429,30 @@ mod world_checks {
         match q.choices {
             Choices::Text(t) => t,
             _ => panic!("{}: needs text choices", q.id),
+        }
+    }
+
+    /// Choices are shuffled before they're shown, so an explanation that points
+    /// at "the middle program" can end up criticising the right answer.
+    #[test]
+    fn explanations_never_point_at_a_position() {
+        let words = ["first", "second", "third", "middle", "last", "left", "right", "top", "bottom", "above", "below", "other"];
+        for bank in BANKS.iter() {
+            for q in bank.iter() {
+                let lower = q.explain.to_lowercase();
+                for w in words {
+                    for noun in ["program", "one", "answer", "choice", "option", "square"] {
+                        let phrase = format!("{w} {noun}");
+                        assert!(!lower.contains(&phrase), "{}: explanation says \"{phrase}\", but choices are shuffled", q.id);
+                    }
+                }
+                for letter in ["a", "b", "c", "d"] {
+                    for noun in ["program", "square", "choice", "answer"] {
+                        let phrase = format!("{noun} {letter} ");
+                        assert!(!format!("{lower} ").contains(&phrase), "{}: explanation names {noun} {letter}, but choices are shuffled", q.id);
+                    }
+                }
+            }
         }
     }
 

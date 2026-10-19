@@ -180,16 +180,28 @@ impl Users {
         write("users.txt", &text);
     }
 
-    pub fn add(&mut self, name: &str, shirt: usize) -> u32 {
-        let id = self.list.iter().map(|u| u.id).max().unwrap_or(0) + 1;
+    /// Adds a player and returns their id, or None if the list is full or the
+    /// name is taken. Re-reads the list first: another browser tab (or game
+    /// window) may have added players since this one loaded it, and writing
+    /// back an old copy would drop them and reuse their ids.
+    pub fn add(&mut self, name: &str, shirt: usize) -> Option<u32> {
+        *self = Users::load();
+        if self.list.len() >= MAX_USERS || self.list.iter().any(|u| u.name.eq_ignore_ascii_case(name)) {
+            return None;
+        }
+        // Never reuse an id that still has a save, even one this list doesn't know.
+        let mut id = self.list.iter().map(|u| u.id).max().unwrap_or(0) + 1;
+        while self.list.iter().any(|u| u.id == id) || read(&user_file(id)).is_some() {
+            id += 1;
+        }
         self.list.push(User { id, name: name.to_string(), shirt });
         self.save();
-        // Make sure no stale file from an old player with this id is picked up.
         Progress::new(Some(id)).save();
-        id
+        Some(id)
     }
 
     pub fn remove(&mut self, id: u32) {
+        *self = Users::load(); // keep players other tabs have added
         self.list.retain(|u| u.id != id);
         self.save();
         remove(&user_file(id));

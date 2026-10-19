@@ -3,7 +3,8 @@
 //! Every question shows a short program (in the save format, see
 //! `Program::deserialize`) and sometimes a small map, then asks what happens.
 //! **The first choice is always the right answer**; the game shuffles the
-//! choices before showing them.
+//! choices before showing them, so explanations must never point at a choice
+//! by its position ("the middle program", "the last one").
 //!
 //! Each question also says how to prove its answer (`proof`). `cargo test`
 //! runs every program in the game's own simulator and fails if a marked
@@ -600,7 +601,7 @@ const W4: &[Question] = &[
         map: &["TTTTTTT", "T>*.*PT", "TTTTTTT"],
         blocks: 2,
         choices: Choices::Programs(&["[R2 [E3 M | P ] F F ]", "[R2 [E5 M | P ] F F ]", "[R2 M F F ]"]),
-        explain: "IF stone ahead: mine it. ELSE it must be lava: bridge it. The middle program has it backwards and tries to mine lava.",
+        explain: "IF stone ahead: mine it. ELSE it must be lava: bridge it. Checking for LAVA first gets it backwards and tries to mine lava.",
         proof: Proof::OnlyWinner,
         ..Q
     },
@@ -637,7 +638,7 @@ const W4: &[Question] = &[
         prompt: "Each $ might be a diamond or empty. Which program works every time?",
         map: &["TTTTTTT", "TT$$$TT", "T>...PT", "TTTTTTT"],
         choices: Choices::Programs(&["[R3 F L [I4 M ] R ] F", "[R3 F L M R ] F", "[R3 F R [I4 M ] L ] F"]),
-        explain: "Look up (the miner's left) and mine only IF there's a diamond. The last program looks the wrong way and never finds them.",
+        explain: "Look up (the miner's left) and mine only IF there's a diamond. Turning RIGHT first looks the wrong way and never finds them.",
         proof: Proof::OnlyWinner,
         ..Q
     },
@@ -667,7 +668,7 @@ const W4: &[Question] = &[
         map: &["TTTTTT", "T>~~PT", "TTTTTT"],
         blocks: 2,
         choices: Choices::Programs(&["[R3 [I6 P ] F ]", "[R3 [I5 P ] F ]", "[R3 P F ]"]),
-        explain: "Check for WATER, not lava! The middle program asks the wrong question, so it never builds a bridge.",
+        explain: "Check for WATER, not lava! The program that checks for lava asks the wrong question, so it never builds a bridge.",
         proof: Proof::OnlyWinner,
         ..Q
     },
