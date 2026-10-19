@@ -35,8 +35,9 @@ fn window_conf() -> Conf {
         window_resizable: true,
         // Render at the device's real pixel density in browsers, so phones and
         // tablets (2-3x screens) get sharp text instead of an upscaled blur.
-        // The main loop converts its letterbox viewport and text size to physical
-        // pixels with screen_dpi_scale(); input stays in logical pixels.
+        // The main loop converts its letterbox viewport to physical pixels with
+        // screen_dpi_scale() (macroquad does the same for text); input stays in
+        // logical pixels.
         // Desktop keeps its current behaviour.
         high_dpi: cfg!(target_arch = "wasm32"),
         icon: Some(miniquad::conf::Icon {
@@ -361,10 +362,12 @@ async fn run() {
         let (vw, vh) = (VW * scale, VH * scale);
         let (ox, oy) = ((sw - vw) / 2.0, (sh - vh) / 2.0);
         // screen_width() and mouse_position() are in logical pixels, but the
-        // viewport and text rasterizing work in physical pixels (2-3x on phones
-        // with high_dpi). dpi is 1.0 on desktop.
+        // viewport works in physical pixels (2-3x on phones with high_dpi). dpi
+        // is 1.0 on desktop. Text gets only `scale`: macroquad already multiplies
+        // font sizes by dpi, and doing it here too rasterized every glyph at dpi²,
+        // overfilling the font atlas (its regrowth trips a macroquad bug).
         let dpi = screen_dpi_scale();
-        set_scale(scale * dpi);
+        set_scale(scale);
         set_default_camera();
         clear_background(BLACK);
         set_camera(&Camera2D {

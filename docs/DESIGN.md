@@ -386,7 +386,9 @@ Files live in `$XDG_DATA_HOME/block-coders/` (usually
 
 ```
 users.txt        id;shirt;name           one line per player
-user-<id>.txt    level name;stars;program  one line per level
+                 next;<id>               the next id to hand out (ids are never reused)
+user-<id>.txt    gen;<n>                 how many times this player started over
+                 level name;stars;program  one line per level
                  check:<n>;<passed 0/1>;<last question ids>  one line per World Check
 ```
 
@@ -400,16 +402,25 @@ user-<id>.txt    level name;stars;program  one line per level
 - **Writes happen on every program edit and every win.** The files are tiny, and
   this means closing the window never loses work.
 - Players have up to 12 characters (letters, digits, space, `-`, `_`), and there
-  can be at most 6 players. "Start over" rewrites the player's file empty, and
-  "Delete" removes it. Both ask for confirmation.
+  can be at most 6 players. "Start over" rewrites the player's file empty (and
+  bumps `gen`), and "Delete" removes it. Both ask for confirmation.
 - **Several tabs or windows at once.** Browser tabs share one localStorage, and
   two desktop windows share one folder, but each loaded the player list when it
   started. So the list is re-read whenever "Who's playing?" opens, and again
   right before adding or deleting a player. Otherwise a tab opened earlier would
   write back its old list, dropping players added elsewhere, and hand their id
-  (and wipe their stars) to the new player. New ids also skip any id that still
+  (and wipe their stars) to the new player. Ids come from `next`, so a deleted
+  player's id is never handed out again, and they also skip any id that still
   has a save file. If another tab took the name or the last free spot in the
   meantime, "Let's play!" is refused and the popup shows why.
+- **Two tabs playing the same player.** Saving a player re-reads their file
+  and merges: stars and passed checks only go up, and a program or set of
+  check questions this tab didn't change keeps the stored version. If the
+  stored `gen` differs, the player started over elsewhere, so nothing is
+  written and this tab takes the stored progress instead. A player missing
+  from `users.txt` was deleted elsewhere and is never written back. The
+  read-merge-write isn't atomic, but it runs in one go on each save, so two
+  tabs would have to save in the same instant to collide.
 
 ## Packaging
 
@@ -447,6 +458,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
 | `read_only_saves_never_change` | While the autopilot's read-only switch is on, adding, deleting or resetting players changes nothing on disk |
 | `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
+| `a_stale_tab_never_overwrites_newer_progress` | A tab playing the same player as another never erases its stars or checks, undoes its "Start over", or writes a deleted player back or into a new player |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 | `world_checks::every_answer_is_right` | Every World Check answer is right, and every wrong choice is wrong, by running the programs |
 | `world_checks::explanations_never_point_at_a_position` | No explanation says "the middle program", "Program B" and so on, since choices are shuffled |
