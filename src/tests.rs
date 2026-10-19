@@ -239,7 +239,9 @@ fn players_can_be_created_reset_and_deleted() {
     assert!(p1.programs[0].is_some());
     // Old saves numbered levels 0-19; they must land on the same level by name.
     std::fs::write(data.join("user-9.txt"), "6;3;[R10 F ] /\n19;2;/\n").unwrap();
-    let old = Progress::load(9);
+    let listed = std::fs::read_to_string(data.join("users.txt")).unwrap();
+    std::fs::write(data.join("users.txt"), format!("{listed}9;1;Old Timer\n")).unwrap();
+    let mut old = Progress::load(9);
     let idx = |n: &str| LEVELS.iter().position(|l| l.name == n).unwrap();
     assert_eq!(old.stars[idx("The Long Hallway")], 3);
     assert_eq!(old.stars[idx("Deep Dark Gauntlet")], 2);
@@ -263,7 +265,7 @@ fn players_can_be_created_reset_and_deleted() {
     sp.stars[0] = 3;
     sp.save();
     assert!(Progress::load(sam).unlocked(1));
-    assert_eq!(Users::load().list.len(), 2);
+    assert_eq!(Users::load().list.len(), 3);
     // Saves are swapped in whole (no temp files left over) and kept private.
     let leftovers: Vec<_> = std::fs::read_dir(&data).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "tmp")).collect();
     assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
@@ -281,10 +283,48 @@ fn players_can_be_created_reset_and_deleted() {
     assert_eq!(Progress::load(users.list[0].id).total_stars(), 5);
 
     users.remove(sam);
-    assert_eq!(Users::load().list.len(), 1);
+    assert_eq!(Users::load().list.len(), 2);
     // A new player never inherits a deleted player's file.
     let next = users.add("Alex", 0).unwrap();
     assert_eq!(Progress::load(next).total_stars(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The screenshot autopilot shows real players; nothing it does may change a save.
+#[test]
+fn read_only_saves_never_change() {
+    use crate::save::{set_read_only, Progress, Users};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-readonly-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+    let mut users = Users::load();
+    let ana = users.add("Ana", 0).unwrap();
+    let mut p = Progress::load(ana);
+    p.stars[0] = 3;
+    p.save();
+
+    set_read_only(true);
+    Progress::load(ana).reset();
+    let _ = users.add("Sam", 2);
+    users.remove(ana);
+    set_read_only(false);
+
+    let names: Vec<String> = Users::load().list.iter().map(|u| u.name.clone()).collect();
+    assert_eq!(names, ["Ana"]);
+    assert_eq!(Progress::load(ana).total_stars(), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Loading can write too: an old single-player save becomes "Player 1".
+    // The autopilot turns read-only on first, so even that leaves no trace.
+    let data = dir.join("block-coders");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("progress.txt"), "0;3;F F F F /\n").unwrap();
+    set_read_only(true);
+    assert_eq!(Users::load().list.len(), 1);
+    set_read_only(false);
+    let files: Vec<_> = std::fs::read_dir(&data).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(files, ["progress.txt"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -326,6 +366,94 @@ fn a_stale_tab_keeps_other_tabs_players() {
     }
     assert_eq!(Users::load().list.len(), MAX_USERS);
     assert!(tab_c.add("Hal", 0).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A stale tab playing the same player as another tab must not erase the
+/// other tab's stars, undo a "Start over", or write a deleted player's
+/// progress into a new player.
+#[test]
+fn a_stale_tab_never_overwrites_newer_progress() {
+    use crate::save::{Progress, Saved, Users};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-stale-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+    let mut users = Users::load();
+    let ana = users.add("Ana", 0).unwrap();
+    let prog = |s: &str| crate::program::Program::deserialize(s);
+
+    // Both tabs open Ana. A earns stars; B then edits a different level.
+    let mut a = Progress::load(ana);
+    let mut b = Progress::load(ana);
+    a.stars[0] = 3;
+    a.programs[0] = prog("F F F F /");
+    a.checks[0] = true;
+    a.save();
+    b.programs[1] = prog("F /");
+    b.save();
+    let now = Progress::load(ana);
+    assert_eq!(now.stars[0], 3, "B erased A's stars");
+    assert!(now.checks[0], "B erased A's World Check");
+    assert!(now.programs[0].is_some() && now.programs[1].is_some());
+    assert_eq!(b.stars[0], 3, "B should catch up on A's stars when it saves");
+    // B's own edit to a level wins over the stored one.
+    b.programs[0] = prog("R F /");
+    b.save();
+    assert_eq!(Progress::load(ana).programs[0].as_ref().map(|p| p.serialize()), prog("R F /").map(|p| p.serialize()));
+
+    // A starts over; B, still showing the old stars, must not bring them back.
+    let mut b = Progress::load(ana);
+    Progress::load(ana).reset();
+    b.stars[2] = 2;
+    b.programs[2] = prog("F F /");
+    assert_eq!(b.save(), Saved::StartedOverElsewhere);
+    // The play screen then shows the stored program, so its next edit can't
+    // bring the old one back.
+    assert!(b.programs[2].is_none());
+    b.programs[2] = prog("L /");
+    assert_eq!(b.save(), Saved::Done);
+    assert_eq!(Progress::load(ana).programs[2].as_ref().map(|p| p.serialize()), prog("L /").map(|p| p.serialize()));
+    b.programs[2] = None;
+    b.save();
+    let now = Progress::load(ana);
+    assert_eq!(now.total_stars(), 0, "a stale tab undid Start over");
+    assert!(now.programs.iter().all(|p| p.is_none()));
+    assert_eq!(b.total_stars(), 0, "B should pick up the reset");
+    // ...but once caught up, B saves normally again.
+    b.stars[0] = 1;
+    b.save();
+    assert_eq!(Progress::load(ana).stars[0], 1);
+
+    // A deletes Ana and adds Ben; B, still playing Ana, saves.
+    let mut b = Progress::load(ana);
+    users.remove(ana);
+    let ben = users.add("Ben", 1).unwrap();
+    assert_ne!(ben, ana, "ids must never be reused");
+    b.stars[0] = 3;
+    b.save();
+    b.reset();
+    assert_eq!(Progress::load(ben).total_stars(), 0);
+    assert!(!dir.join("block-coders").join(format!("user-{ana}.txt")).exists(), "deleted player came back");
+    // Deleting the newest player still doesn't free their id.
+    users.remove(ben);
+    let cat = users.add("Cat", 2).unwrap();
+    assert!(cat > ben);
+
+    // A save that fails (storage full, disk error) mustn't make the next save
+    // think the edit was stored: the win after it keeps the solution.
+    let mut p = Progress::load(cat);
+    p.programs[0] = prog("F F F F /");
+    let blocker = dir.join("block-coders").join(format!("user-{cat}.txt.tmp"));
+    std::fs::create_dir_all(&blocker).unwrap(); // the temp file can't be written
+    p.save();
+    std::fs::remove_dir(&blocker).unwrap();
+    assert!(Progress::load(cat).programs[0].is_none(), "the failed save shouldn't have landed");
+    p.stars[0] = 3;
+    p.save();
+    let now = Progress::load(cat);
+    assert_eq!(now.stars[0], 3);
+    assert_eq!(now.programs[0].as_ref().map(|p| p.serialize()), prog("F F F F /").map(|p| p.serialize()), "the solution was lost");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -633,6 +761,8 @@ mod world_checks {
         let dir = std::env::temp_dir().join(format!("block-coders-checks-{}", std::process::id()));
         let data = dir.join("block-coders");
         std::fs::create_dir_all(&data).unwrap();
+        // Only listed players are saved (a deleted one never comes back).
+        std::fs::write(data.join("users.txt"), "5;0;Kim\n").unwrap();
         unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
 
         let mut p = Progress::new(Some(5));

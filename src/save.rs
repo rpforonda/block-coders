@@ -4,7 +4,13 @@
 //! Two entries, stored as files on desktop (in ~/.local/share/block-coders/) and
 //! in the browser's localStorage on the web (see `storage` below):
 //!   users.txt          one line per player: id ; shirt colour ; name
+//!                      plus "next;<id>", the next id to hand out
 //!   user-<id>.txt      that player's progress: level name ; stars ; program
+//!                      plus "gen;<n>", how many times they've started over
+//!
+//! Two browser tabs (or game windows) can have the same saves open at once, so
+//! every write re-reads what's stored and merges into it rather than writing
+//! back a stale copy. See `Users::add` and `Progress::save`.
 //!
 //! Everything read back is treated as untrusted. On the web, anyone can edit
 //! localStorage from the browser's dev tools, so loading validates and clamps
@@ -14,7 +20,8 @@ use crate::check::CHECKS;
 use crate::levels::{CHAPTERS, LEGACY_ORDER, LEVELS};
 use crate::questions::BANKS;
 use crate::program::Program;
-use storage::{read, remove, write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use storage::read;
 
 pub const MAX_USERS: usize = 6;
 pub const MAX_NAME: usize = 12;
@@ -34,10 +41,11 @@ mod storage {
         Some(base.join("block-coders"))
     }
 
-    pub fn write(name: &str, contents: &str) {
-        let Some(dir) = data_dir() else { return };
+    /// Returns whether the save was written.
+    pub fn write(name: &str, contents: &str) -> bool {
+        let Some(dir) = data_dir() else { return false };
         if std::fs::create_dir_all(&dir).is_err() {
-            return;
+            return false;
         }
         // Saves hold children's names, so keep them private to this account.
         #[cfg(unix)]
@@ -48,9 +56,11 @@ mod storage {
         // Write a temporary file, then rename it over the old one, so a crash or
         // power cut mid-save leaves either the old save or the new one, never half.
         let tmp = dir.join(format!("{name}.tmp"));
-        if std::fs::write(&tmp, contents).and_then(|_| std::fs::rename(&tmp, dir.join(name))).is_err() {
+        let ok = std::fs::write(&tmp, contents).and_then(|_| std::fs::rename(&tmp, dir.join(name))).is_ok();
+        if !ok {
             let _ = std::fs::remove_file(&tmp);
         }
+        ok
     }
 
     pub fn read(name: &str) -> Option<String> {
@@ -88,13 +98,14 @@ mod storage {
         1
     }
 
-    pub fn write(name: &str, contents: &str) {
+    /// Returns whether the save was written.
+    pub fn write(name: &str, contents: &str) -> bool {
         if contents.len() > super::MAX_SAVE_BYTES {
-            return;
+            return false;
         }
         // SAFETY: both pointers come from live &str values with their exact
         // lengths, and the JS side only reads that many bytes.
-        unsafe { bc_storage_set(name.as_ptr(), name.len(), contents.as_ptr(), contents.len()) };
+        unsafe { bc_storage_set(name.as_ptr(), name.len(), contents.as_ptr(), contents.len()) == 1 }
     }
 
     pub fn read(name: &str) -> Option<String> {
@@ -114,6 +125,26 @@ mod storage {
     pub fn remove(name: &str) {
         // SAFETY: pointer and length come from a live &str.
         unsafe { bc_storage_remove(name.as_ptr(), name.len()) };
+    }
+}
+
+/// Set while the screenshot autopilot runs: it shows the real players, but its
+/// popups and runs must never change their saves (a stray real click on its
+/// "Start over" popup would otherwise wipe a player).
+static READ_ONLY: AtomicBool = AtomicBool::new(false);
+
+pub fn set_read_only(on: bool) {
+    READ_ONLY.store(on, Ordering::Relaxed);
+}
+
+/// Returns whether the save was written (never while read-only).
+fn write(name: &str, contents: &str) -> bool {
+    !READ_ONLY.load(Ordering::Relaxed) && storage::write(name, contents)
+}
+
+fn remove(name: &str) {
+    if !READ_ONLY.load(Ordering::Relaxed) {
+        storage::remove(name);
     }
 }
 
@@ -142,21 +173,33 @@ pub struct User {
 
 pub struct Users {
     pub list: Vec<User>,
+    /// Ids are never reused, so a stale tab still playing a deleted player
+    /// can't write their progress into a new player who got the same id.
+    next_id: u32,
 }
+
+/// Ids beyond this in a save are treated as junk rather than trusted.
+const MAX_ID: u32 = 1_000_000;
 
 impl Users {
     pub fn load() -> Users {
-        let mut users = Users { list: Vec::new() };
+        let mut users = Users { list: Vec::new(), next_id: 1 };
         match read("users.txt") {
             Some(text) => {
                 for line in text.lines() {
+                    if let Some(next) = line.strip_prefix("next;") {
+                        if let Some(next) = next.trim().parse::<u32>().ok().filter(|&n| n <= MAX_ID) {
+                            users.next_id = users.next_id.max(next);
+                        }
+                        continue;
+                    }
                     let mut parts = line.splitn(3, ';');
                     let (Some(id), Some(shirt), Some(name)) = (parts.next(), parts.next(), parts.next()) else {
                         continue;
                     };
                     let (Ok(id), Ok(shirt)) = (id.trim().parse::<u32>(), shirt.trim().parse::<usize>()) else { continue };
                     // id 0 is the guest; ids must be unique; never more than MAX_USERS.
-                    if id == 0 || users.list.iter().any(|u| u.id == id) || users.list.len() >= MAX_USERS {
+                    if id == 0 || id > MAX_ID || users.list.iter().any(|u| u.id == id) || users.list.len() >= MAX_USERS {
                         continue;
                     }
                     let shirt = shirt % crate::art::SHIRTS.len();
@@ -166,18 +209,27 @@ impl Users {
             None => {
                 // Older versions had a single shared save; keep it as the first player.
                 if let Some(old) = read("progress.txt") {
-                    write(&user_file(1), &old);
+                    let _ = write(&user_file(1), &old);
                     users.list.push(User { id: 1, name: "Player 1".into(), shirt: 0 });
+                    users.next_id = 2;
                     users.save();
                 }
             }
         }
+        // Saves from before "next;" only have the ids themselves to go on.
+        users.next_id = users.next_id.max(users.list.iter().map(|u| u.id + 1).max().unwrap_or(1));
         users
     }
 
     fn save(&self) {
-        let text: String = self.list.iter().map(|u| format!("{};{};{}\n", u.id, u.shirt, u.name)).collect();
-        write("users.txt", &text);
+        let mut text: String = self.list.iter().map(|u| format!("{};{};{}\n", u.id, u.shirt, u.name)).collect();
+        text.push_str(&format!("next;{}\n", self.next_id));
+        let _ = write("users.txt", &text);
+    }
+
+    /// Is this player still in the stored list? Another tab may have deleted them.
+    fn listed(id: u32) -> bool {
+        Users::load().list.iter().any(|u| u.id == id)
     }
 
     /// Adds a player and returns their id, or None if the list is full or the
@@ -189,11 +241,15 @@ impl Users {
         if self.list.len() >= MAX_USERS || self.list.iter().any(|u| u.name.eq_ignore_ascii_case(name)) {
             return None;
         }
-        // Never reuse an id that still has a save, even one this list doesn't know.
-        let mut id = self.list.iter().map(|u| u.id).max().unwrap_or(0) + 1;
+        // Never reuse an id, or one that still has a save this list doesn't know.
+        let mut id = self.next_id;
         while self.list.iter().any(|u| u.id == id) || read(&user_file(id)).is_some() {
             id += 1;
         }
+        if id > MAX_ID {
+            return None;
+        }
+        self.next_id = id + 1;
         self.list.push(User { id, name: name.to_string(), shirt });
         self.save();
         Progress::new(Some(id)).save();
@@ -208,6 +264,17 @@ impl Users {
     }
 }
 
+/// What happened to a `Progress::save`.
+#[derive(Debug, PartialEq)]
+pub enum Saved {
+    /// Saved, or skipped (a guest, a player deleted elsewhere, storage failing).
+    Done,
+    /// The player started over in another tab or window since this copy was
+    /// loaded. Nothing was written, and this copy now holds the stored
+    /// progress, so a screen showing one of its programs must show that instead.
+    StartedOverElsewhere,
+}
+
 pub struct Progress {
     /// None = a guest whose progress is never saved.
     pub user: Option<u32>,
@@ -219,6 +286,13 @@ pub struct Progress {
     /// The question ids of each check's most recent attempt, so a retry can
     /// pick different ones.
     pub check_last: Vec<Vec<String>>,
+    /// Bumped by every "Start over", so a tab that loaded the player before a
+    /// reset elsewhere knows its stars are out of date.
+    generation: u32,
+    /// Programs and check questions as last loaded or saved, to tell which
+    /// ones this tab changed (and so should win) when merging on save.
+    base_programs: Vec<String>,
+    base_check_last: Vec<Vec<String>>,
 }
 
 impl Progress {
@@ -231,13 +305,30 @@ impl Progress {
             unlock_all: false,
             checks: vec![false; CHECKS],
             check_last: vec![Vec::new(); CHECKS],
+            generation: 0,
+            base_programs: vec![String::new(); n],
+            base_check_last: vec![Vec::new(); CHECKS],
         }
+    }
+
+    fn program_text(&self, i: usize) -> String {
+        self.programs[i].as_ref().map(|p| p.serialize()).unwrap_or_default()
+    }
+
+    /// Remembers the current programs and questions as the merge baseline.
+    fn rebase(&mut self) {
+        self.base_programs = (0..LEVELS.len()).map(|i| self.program_text(i)).collect();
+        self.base_check_last = self.check_last.clone();
     }
 
     pub fn load(user: u32) -> Progress {
         let mut p = Progress::new(Some(user));
         let Some(text) = read(&user_file(user)) else { return p };
         for line in text.lines() {
+            if let Some(g) = line.strip_prefix("gen;") {
+                p.generation = g.trim_end_matches(';').trim().parse().unwrap_or(0);
+                continue;
+            }
             let mut parts = line.splitn(3, ';');
             let (Some(key), Some(s), Some(prog)) = (parts.next(), parts.next(), parts.next()) else {
                 continue;
@@ -263,26 +354,71 @@ impl Progress {
             p.stars[i] = s.trim().parse::<u8>().unwrap_or(0).min(3);
             p.programs[i] = Program::deserialize(prog).filter(|pr| !pr.is_empty());
         }
+        p.rebase();
         p
     }
 
-    pub fn save(&self) {
-        let Some(user) = self.user else { return };
-        let mut out = String::new();
+    /// Saves this player, merged with whatever another tab or window saved for
+    /// them since this one loaded: stars and passed checks only ever go up, and
+    /// programs this tab didn't touch keep the stored version. If the player
+    /// started over or was deleted elsewhere, nothing is written and this copy
+    /// is brought up to date instead, so a stale tab can't undo either.
+    pub fn save(&mut self) -> Saved {
+        let Some(user) = self.user else { return Saved::Done };
+        if !Users::listed(user) {
+            return Saved::Done;
+        }
+        let stored = Progress::load(user);
+        if stored.generation != self.generation {
+            let unlock_all = self.unlock_all;
+            *self = stored;
+            self.unlock_all = unlock_all;
+            return Saved::StartedOverElsewhere;
+        }
+        for i in 0..LEVELS.len() {
+            self.stars[i] = self.stars[i].max(stored.stars[i]);
+            if self.program_text(i) == self.base_programs[i] {
+                self.programs[i] = stored.programs[i].clone();
+            }
+        }
+        for c in 0..CHECKS {
+            self.checks[c] |= stored.checks[c];
+            if self.check_last[c] == self.base_check_last[c] {
+                self.check_last[c] = stored.check_last[c].clone();
+            }
+        }
+        self.write_out(user);
+        Saved::Done
+    }
+
+    /// Writes this copy as it is. The merge baseline only moves on when the
+    /// write worked: otherwise the next save would think this tab's unsaved
+    /// changes were already stored and take the older stored programs instead.
+    fn write_out(&mut self, user: u32) -> bool {
+        let mut out = format!("gen;{}\n", self.generation);
         for (i, level) in LEVELS.iter().enumerate() {
-            let prog = self.programs[i].as_ref().map(|p| p.serialize()).unwrap_or_default();
-            out.push_str(&format!("{};{};{prog}\n", level.name, self.stars[i]));
+            out.push_str(&format!("{};{};{}\n", level.name, self.stars[i], self.program_text(i)));
         }
         for c in 0..CHECKS {
             out.push_str(&format!("check:{c};{};{}\n", self.checks[c] as u8, self.check_last[c].join(",")));
         }
-        write(&user_file(user), &out);
+        let ok = write(&user_file(user), &out);
+        if ok {
+            self.rebase();
+        }
+        ok
     }
 
     /// Wipes all stars and programs so the player starts from level 1 again.
     pub fn reset(&mut self) {
         *self = Progress::new(self.user);
-        self.save();
+        let Some(user) = self.user else { return };
+        if Users::listed(user) {
+            self.generation = Progress::load(user).generation.wrapping_add(1);
+            if !self.write_out(user) {
+                *self = Progress::load(user); // didn't happen; don't pretend it did
+            }
+        }
     }
 
     /// Everything up to (and one past) the furthest level beaten is open, as

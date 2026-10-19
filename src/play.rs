@@ -8,7 +8,7 @@ use crate::editor::{kind_color, Editor, Tab};
 const HISTORY: usize = 100;
 use crate::levels::{Level, CHAPTERS, LEVELS};
 use crate::program::{contains, simulate, Action, Program, Step, Vm};
-use crate::save::Progress;
+use crate::save::{Progress, Saved};
 use crate::sound::{Sfx, Sounds};
 use crate::ui::*;
 use crate::world::{Dir, Failure, Outcome, Tile, World};
@@ -185,7 +185,7 @@ impl Play {
     // Hooks for the screenshot autopilot (see BC_SHOT in main.rs).
     pub fn debug_solve(&mut self) {
         self.modal = Modal::None;
-        let src = std::env::var("BC_PROGRAM").unwrap_or_else(|_| self.level.solution.to_string());
+        let src = crate::dev_env("BC_PROGRAM").unwrap_or_else(|| self.level.solution.to_string());
         self.program = Program::deserialize(&src).unwrap_or_default();
     }
     pub fn debug_code(&mut self) {
@@ -367,7 +367,9 @@ impl Play {
         self.stars = if used <= par { 3 } else if used <= par + 3 { 2 } else { 1 };
         progress.stars[self.idx] = progress.stars[self.idx].max(self.stars);
         progress.programs[self.idx] = Some(self.program.clone());
-        progress.save();
+        if self.saved(progress) == Saved::StartedOverElsewhere {
+            return;
+        }
         sfx.play(Sfx::Win);
         self.say("You did it!", MsgKind::Success);
         self.modal = Modal::Victory;
@@ -673,7 +675,23 @@ impl Play {
             self.reset_run();
         }
         progress.programs[self.idx] = Some(self.program.clone());
-        progress.save();
+        self.saved(progress);
+    }
+
+    /// Saves, and if the player started over in another tab or window, swaps
+    /// in the stored (wiped) program. Otherwise this tab's old program would be
+    /// saved again on the next edit, bringing it back.
+    fn saved(&mut self, progress: &mut Progress) -> Saved {
+        let saved = progress.save();
+        if saved == Saved::StartedOverElsewhere {
+            self.program = progress.programs[self.idx].clone().unwrap_or_default();
+            self.editor = Editor::new();
+            self.undo_stack.clear();
+            self.redo_stack.clear();
+            self.reset_run();
+            self.say("This player started over in another window, so this level starts fresh too.", MsgKind::Info);
+        }
+        saved
     }
 
     fn draw_world(&self, art: &Art) {

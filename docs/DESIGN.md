@@ -366,7 +366,14 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   virtual coordinates.
 - **Sharp text when scaled.** `ui::text` renders fonts at the real on-screen
   pixel size (`font_size × scale`, `font_scale = 1/scale`), so text stays
-  sharp at any window size.
+  sharp at any window size. macroquad multiplies by the screen's pixel density
+  itself, so `scale` leaves density out.
+- **Font atlas growth.** macroquad 0.4.16 deletes its glyph texture as soon as
+  a new glyph makes it grow, while text queued earlier in the frame still uses
+  it, and miniquad 0.4.11 then re-binds the deleted texture from its cache. So
+  `ui::cache_glyphs` flushes queued drawing and clears miniquad's bindings
+  before any text with an uncached glyph, then caches the whole string before
+  drawing it. Remove this if macroquad fixes it upstream.
 - **Procedural art** (`art.rs`). Every texture is a 16×16 image built by a
   function of (x, y): hashed noise for grass and stone, sine patterns for
   animated water, lava and portal frames, and ASCII pixel-art for the miner,
@@ -386,7 +393,9 @@ Files live in `$XDG_DATA_HOME/block-coders/` (usually
 
 ```
 users.txt        id;shirt;name           one line per player
-user-<id>.txt    level name;stars;program  one line per level
+                 next;<id>               the next id to hand out (ids are never reused)
+user-<id>.txt    gen;<n>                 how many times this player started over
+                 level name;stars;program  one line per level
                  check:<n>;<passed 0/1>;<last question ids>  one line per World Check
 ```
 
@@ -400,16 +409,28 @@ user-<id>.txt    level name;stars;program  one line per level
 - **Writes happen on every program edit and every win.** The files are tiny, and
   this means closing the window never loses work.
 - Players have up to 12 characters (letters, digits, space, `-`, `_`), and there
-  can be at most 6 players. "Start over" rewrites the player's file empty, and
-  "Delete" removes it. Both ask for confirmation.
+  can be at most 6 players. "Start over" rewrites the player's file empty (and
+  bumps `gen`), and "Delete" removes it. Both ask for confirmation.
 - **Several tabs or windows at once.** Browser tabs share one localStorage, and
   two desktop windows share one folder, but each loaded the player list when it
   started. So the list is re-read whenever "Who's playing?" opens, and again
   right before adding or deleting a player. Otherwise a tab opened earlier would
   write back its old list, dropping players added elsewhere, and hand their id
-  (and wipe their stars) to the new player. New ids also skip any id that still
+  (and wipe their stars) to the new player. Ids come from `next`, so a deleted
+  player's id is never handed out again, and they also skip any id that still
   has a save file. If another tab took the name or the last free spot in the
   meantime, "Let's play!" is refused and the popup shows why.
+- **Two tabs playing the same player.** Saving a player re-reads their file
+  and merges: stars and passed checks only go up, and a program or set of
+  check questions this tab didn't change keeps the stored version. If the
+  stored `gen` differs, the player started over elsewhere, so nothing is
+  written and this tab takes the stored progress instead (`Saved::StartedOverElsewhere`);
+  an open level swaps in the stored program too, or its next edit would save
+  the old one again. The merge baseline only moves on when a write works, so a
+  failed save (storage full) doesn't make the next one drop this tab's edits. A player missing
+  from `users.txt` was deleted elsewhere and is never written back. The
+  read-merge-write isn't atomic, but it runs in one go on each save, so two
+  tabs would have to save in the same instant to collide.
 
 ## Packaging
 
@@ -445,7 +466,9 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
+| `read_only_saves_never_change` | While the autopilot's read-only switch is on, adding, deleting or resetting players changes nothing on disk |
 | `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
+| `a_stale_tab_never_overwrites_newer_progress` | A tab playing the same player as another never erases its stars or checks, undoes its "Start over", or writes a deleted player back or into a new player |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 | `world_checks::every_answer_is_right` | Every World Check answer is right, and every wrong choice is wrong, by running the programs |
 | `world_checks::explanations_never_point_at_a_position` | No explanation says "the middle program", "Program B" and so on, since choices are shuffled |
@@ -462,8 +485,26 @@ click after the run, which was used to reproduce and verify the tab-switching
 bug. `BC_INPUT="x,y,act;..."` plays one scripted mouse step per frame (`move`,
 `down`, `up`, `shot`, `dump`), which tests drag-and-drop and undo with real
 input handling. `dump` prints the program after each step. `BC_CHECK=<n>`
-opens World Check n (0-based) instead of a level. Set `XDG_DATA_HOME` to a
-temporary folder so test runs never touch real saves.
+opens World Check n (0-based) instead of a level, and stops after its intro
+unless `BC_INPUT` drives it.
+
+Safety rails, so the autopilot can't run or do damage by accident:
+
+- Only debug builds read any `BC_*` setting except `BC_TOUCH`, which just forces the
+  touch keyboard (`dev_env` in `main.rs`; `BC_PROGRAM` goes through it too).
+  Release builds and the web build ignore them all. The browser has no
+  environment variables anyway.
+- When `BC_SHOT` is set, the game prints a warning to stderr first. A variable
+  left in the shell (e.g. a fish `set -U`) would otherwise quietly turn every
+  `cargo run` into the autopilot.
+- Saves are read-only for the whole run (`save::set_read_only`). The autopilot
+  shows the real players and opens a "Start over" popup for the first one, and
+  real mouse and keyboard input still work, so without this a stray click or
+  Enter could create or wipe a player.
+- The screenshot folder is created if it's missing.
+
+Still set `XDG_DATA_HOME` to a temporary folder for test runs, so the
+screenshots don't show real players' names.
 
 ## Key decisions
 
