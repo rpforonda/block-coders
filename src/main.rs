@@ -308,7 +308,7 @@ fn main() {
 
 /// Reads a developer-only setting. Release builds (the installed game) ignore
 /// these, so nobody can make a player's copy drive itself or write screenshots.
-fn dev_env(name: &str) -> Option<String> {
+pub fn dev_env(name: &str) -> Option<String> {
     if cfg!(debug_assertions) { std::env::var(name).ok() } else { None }
 }
 
@@ -324,7 +324,15 @@ async fn run() {
     let mut world_sel = 0;
 
     // Developer autopilot: BC_SHOT=<dir> saves screenshots of a level being solved.
-    let shot_dir = dev_env("BC_SHOT");
+    let shot_dir = dev_env("BC_SHOT").filter(|dir| {
+        // Say so loudly: a BC_SHOT left in the shell (e.g. a fish universal
+        // variable) would otherwise turn every `cargo run` into the autopilot.
+        eprintln!("BC_SHOT={dir}: running the screenshot autopilot. Saves are read-only. Unset BC_SHOT to play normally.");
+        std::fs::create_dir_all(dir).map_err(|e| eprintln!("BC_SHOT: can't create {dir}: {e}")).is_ok()
+    });
+    if shot_dir.is_some() {
+        save::set_read_only(true);
+    }
     // BC_CHECK=<n> opens World Check n (0-based) instead of a level.
     let shot_check: Option<usize> = dev_env("BC_CHECK").and_then(|s| s.parse().ok()).filter(|&c| c < CHECKS);
     let shot_level: usize = dev_env("BC_LEVEL").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -504,8 +512,11 @@ async fn run() {
                 }
                 45 => {
                     shot("3-intro");
-                    if let Screen::Play(p) = &mut screen {
-                        p.debug_solve();
+                    match &mut screen {
+                        Screen::Play(p) => p.debug_solve(),
+                        // A World Check has nothing else to show unless BC_INPUT drives it.
+                        Screen::Check(_) if input_script.is_empty() => break,
+                        _ => {}
                     }
                 }
                 f if f >= 50 && !input_script.is_empty() => {

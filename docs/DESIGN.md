@@ -445,6 +445,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
+| `read_only_saves_never_change` | While the autopilot's read-only switch is on, adding, deleting or resetting players changes nothing on disk |
 | `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 | `world_checks::every_answer_is_right` | Every World Check answer is right, and every wrong choice is wrong, by running the programs |
@@ -462,8 +463,26 @@ click after the run, which was used to reproduce and verify the tab-switching
 bug. `BC_INPUT="x,y,act;..."` plays one scripted mouse step per frame (`move`,
 `down`, `up`, `shot`, `dump`), which tests drag-and-drop and undo with real
 input handling. `dump` prints the program after each step. `BC_CHECK=<n>`
-opens World Check n (0-based) instead of a level. Set `XDG_DATA_HOME` to a
-temporary folder so test runs never touch real saves.
+opens World Check n (0-based) instead of a level, and stops after its intro
+unless `BC_INPUT` drives it.
+
+Safety rails, so the autopilot can't run or do damage by accident:
+
+- Only debug builds read any `BC_*` setting except `BC_TOUCH`, which just forces the
+  touch keyboard (`dev_env` in `main.rs`; `BC_PROGRAM` goes through it too).
+  Release builds and the web build ignore them all. The browser has no
+  environment variables anyway.
+- When `BC_SHOT` is set, the game prints a warning to stderr first. A variable
+  left in the shell (e.g. a fish `set -U`) would otherwise quietly turn every
+  `cargo run` into the autopilot.
+- Saves are read-only for the whole run (`save::set_read_only`). The autopilot
+  shows the real players and opens a "Start over" popup for the first one, and
+  real mouse and keyboard input still work, so without this a stray click or
+  Enter could create or wipe a player.
+- The screenshot folder is created if it's missing.
+
+Still set `XDG_DATA_HOME` to a temporary folder for test runs, so the
+screenshots don't show real players' names.
 
 ## Key decisions
 
