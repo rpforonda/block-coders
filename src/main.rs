@@ -401,7 +401,7 @@ async fn run() {
         match &mut screen {
             Screen::Title => {
                 if title_screen(&mut ui, &art, &sfx) {
-                    next = Some(Screen::Users(UsersScreen::new(&users)));
+                    next = Some(Screen::Users(UsersScreen::new(&mut users)));
                 }
             }
             Screen::Users(u) => {
@@ -420,7 +420,7 @@ async fn run() {
             Screen::Select => {
                 let me = user.clone().unwrap_or(User { id: 0, name: "Guest".into(), shirt: 0 });
                 match select_screen(&mut ui, &art, &sfx, &mut progress, &me, &mut world_sel) {
-                    Some(SelectOut::Back) => next = Some(Screen::Users(UsersScreen::new(&users))),
+                    Some(SelectOut::Back) => next = Some(Screen::Users(UsersScreen::new(&mut users))),
                     Some(SelectOut::Level(i)) => {
                         next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, me.shirt))))
                     }
@@ -468,7 +468,7 @@ async fn run() {
             match frame {
                 15 => {
                     shot("1-title");
-                    screen = Screen::Users(UsersScreen::new(&users));
+                    screen = Screen::Users(UsersScreen::new(&mut users));
                 }
                 22 => {
                     shot("2a-users");

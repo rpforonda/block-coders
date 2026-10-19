@@ -265,7 +265,9 @@ the next world. Retries are unlimited.
 - **Retries get new questions.** An attempt takes every question that wasn't in
   the previous attempt first, then fills up from the rest. With 15 per bank, each
   retry has at least 5 new questions. The last attempt's ids are saved, so this
-  holds across restarts too. Choices are shuffled every time.
+  holds across restarts too. Choices are shuffled every time, so Bit's
+  explanations never point at a choice by position ("the middle program"):
+  they name it by what it does ("the program that checks for lava").
 - **Unlocking:** world *w* opens when Check *w*−1 is passed. Saves from before
   World Checks keep every world they had already reached, and can still take
   the checks they skipped. The last world (Nether Fortress) needs **all** checks
@@ -400,6 +402,14 @@ user-<id>.txt    level name;stars;program  one line per level
 - Players have up to 12 characters (letters, digits, space, `-`, `_`), and there
   can be at most 6 players. "Start over" rewrites the player's file empty, and
   "Delete" removes it. Both ask for confirmation.
+- **Several tabs or windows at once.** Browser tabs share one localStorage, and
+  two desktop windows share one folder, but each loaded the player list when it
+  started. So the list is re-read whenever "Who's playing?" opens, and again
+  right before adding or deleting a player. Otherwise a tab opened earlier would
+  write back its old list, dropping players added elsewhere, and hand their id
+  (and wipe their stars) to the new player. New ids also skip any id that still
+  has a save file. If another tab took the name or the last free spot in the
+  meantime, "Let's play!" is refused and the popup shows why.
 
 ## Packaging
 
@@ -435,8 +445,10 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
+| `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
 | `empty_while_is_caught` | The VM's infinite-loop guard |
 | `world_checks::every_answer_is_right` | Every World Check answer is right, and every wrong choice is wrong, by running the programs |
+| `world_checks::explanations_never_point_at_a_position` | No explanation says "the middle program", "Program B" and so on, since choices are shuffled |
 | `world_checks::banks_are_big_enough_and_well_formed` | 13+ questions per bank, unique ids, programs parse, spots on the map |
 | `world_checks::retries_get_new_questions` | 10 different questions per attempt, at least 3 new on every retry |
 | `world_checks::checks_gate_the_next_world` | Check unlock rules, old saves, the last world needing every check |

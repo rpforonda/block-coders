@@ -25,7 +25,11 @@ the recommended approach because:
   keyboard/mouse handlers, and no teardown. In a single-page app (Leptos router
   or SvelteKit), leaving the game page and coming back would try to start a
   second copy. An iframe gives the game a clean page every time.
-- Keyboard focus, fullscreen, and canvas sizing stay simple.
+- Keyboard focus, fullscreen, and canvas sizing stay simple. One catch:
+  miniquad's `gl.js` cancels Tab on the canvas, which would trap keyboard users
+  inside the game. The game never uses Tab, so the page hosting it should stop
+  Tab before it reaches the canvas (a capture-phase `keydown` listener on
+  `window` that calls `stopPropagation()`), and focus can leave as usual.
 - The site and the game deploy and version independently.
 
 ## Leptos or Svelte?
@@ -57,7 +61,9 @@ game side below is identical either way.
    stars clamped, programs size- and depth-limited, and oversized values ignored.
    If storage is blocked (some privacy modes) the game still runs, it just
    doesn't remember progress. Saves are per browser; sharing between desktop and
-   web would need an "export/import save code" button later.
+   web would need an "export/import save code" button later. All tabs of the
+   site share the same saves, so the player list is re-read before it's shown
+   or changed (see "Several tabs or windows at once" in DESIGN.md).
 2. **Native-only code.** Put `--write-icon`, `--version` and the `BC_SHOT`
    screenshot autopilot (in `main.rs`) behind `cfg(not(target_arch = "wasm32"))`.
 3. **Crisp rendering.** Consider `high_dpi: true` in `window_conf` so text is

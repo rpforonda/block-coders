@@ -39,7 +39,10 @@ fn card_rect(i: usize) -> Rect {
 }
 
 impl UsersScreen {
-    pub fn new(users: &Users) -> UsersScreen {
+    /// Re-reads the players, so ones added or deleted in another browser tab
+    /// (or game window) show up.
+    pub fn new(users: &mut Users) -> UsersScreen {
+        *users = Users::load();
         let mut s = UsersScreen { mode: Mode::List, stats: Vec::new(), kb: Keyboard::new() };
         s.refresh(users);
         s
@@ -204,11 +207,24 @@ impl UsersScreen {
                 let ok = !clean.is_empty() && !taken;
                 let create = ui.button_if(ok, Rect::new(r.x + r.w - 250.0, r.y + r.h - 80.0, 220.0, 54.0), "Let's play!", rgb8(60, 170, 60), 26.0);
                 if create || (ok && is_key_pressed(KeyCode::Enter)) {
-                    sfx.play(Sfx::Add);
-                    let id = users.add(&clean, *shirt);
-                    self.mode = Mode::List;
-                    self.refresh(users);
-                    return Some(id);
+                    match users.add(&clean, *shirt) {
+                        Some(id) => {
+                            sfx.play(Sfx::Add);
+                            self.mode = Mode::List;
+                            self.refresh(users);
+                            return Some(id);
+                        }
+                        // Another tab took the name or the last free spot; the
+                        // list is fresh now, so the popup shows why.
+                        None => {
+                            sfx.play(Sfx::Bonk);
+                            if users.list.len() >= MAX_USERS {
+                                self.mode = Mode::List;
+                            }
+                            self.refresh(users);
+                            return None;
+                        }
+                    }
                 }
                 if ui.button(Rect::new(r.x + 30.0, r.y + r.h - 80.0, 160.0, 54.0), "Cancel", rgb8(110, 110, 120), 24.0)
                     || is_key_pressed(KeyCode::Escape)
