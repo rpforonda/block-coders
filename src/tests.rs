@@ -784,4 +784,275 @@ mod world_checks {
         assert_eq!(back.check_last[2], vec!["w3-02".to_string()], "only real questions from that world");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    fn json(s: &str) -> String {
+        let mut out = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn json_list(items: impl IntoIterator<Item = String>) -> String {
+        format!("[{}]", items.into_iter().collect::<Vec<_>>().join(","))
+    }
+
+    /// Programs as the Rust code kids see in "Show Rust code", which reads
+    /// better than the save format.
+    fn rust(q: &Question, src: &str) -> String {
+        parse(q, src).to_rust().join("\n")
+    }
+
+    /// Writes every question to `target/question-audit/questions.json` for
+    /// `tools/audit_questions.py`. Skipped by default; run it with
+    /// `cargo test export_questions -- --ignored`.
+    #[test]
+    #[ignore]
+    fn export_questions() {
+        let mut out = Vec::new();
+        for (c, bank) in BANKS.iter().enumerate() {
+            for q in bank.iter() {
+                let (kind, choices) = match q.choices {
+                    Choices::Text(t) => ("text", t.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                    Choices::Programs(p) => ("programs", p.iter().map(|s| rust(q, s)).collect()),
+                    Choices::Spots(s) => ("spots", s.iter().map(|(x, y)| format!("the square at column {x}, row {y}")).collect()),
+                };
+                let program = if q.program.is_empty() { "null".to_string() } else { json(&rust(q, q.program)) };
+                out.push(format!(
+                    "{{\"id\":{},\"world\":{},\"prompt\":{},\"program\":{},\"map\":{},\"blocks\":{},\"kind\":{},\"choices\":{},\"explain\":{}}}",
+                    json(q.id),
+                    c + 1,
+                    json(q.prompt),
+                    program,
+                    json_list(q.map.iter().map(|r| json(r))),
+                    q.blocks,
+                    json(kind),
+                    json_list(choices.iter().map(|s| json(s))),
+                    json(q.explain),
+                ));
+            }
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/question-audit");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("questions.json"), json_list(out) + "\n").unwrap();
+    }
+}
+
+mod smart_hints {
+    use super::level;
+    use crate::hints::{failing_test_world, ladder, Hint};
+    use crate::levels::LEVELS;
+    use crate::program::{contains, simulate, Node, Program};
+    use crate::world::World;
+
+    fn hints(name: &str, program: &str) -> (Program, Vec<Hint>) {
+        let l = level(name);
+        let p = Program::deserialize(program).unwrap();
+        let h = ladder(l, &p, &World::from_level(l, 1), 1);
+        (p, h)
+    }
+
+    #[test]
+    fn a_missing_block_is_found() {
+        let (p, h) = hints("First Steps", "F F F");
+        assert!(h[0].text.contains("ONE change"), "{h:?}");
+        assert_eq!(h[2].text, "Add a FORWARD block right AFTER the outlined block.");
+        assert_eq!(h[2].block, Some(p.main[2].id));
+    }
+
+    #[test]
+    fn a_wrong_turn_is_found() {
+        let (p, h) = hints("Turn the Corner", "F F L F F L F F");
+        assert!(h[0].text.starts_with("The miner walks into a wall"), "{h:?}");
+        assert!(h[1].text.contains("wrong way"));
+        assert_eq!(h[2].text, "Change the outlined TURN LEFT into TURN RIGHT.");
+        assert_eq!(h[2].block, Some(p.main[2].id));
+        assert_eq!(h.len(), 3, "the exact change is the last hint");
+    }
+
+    #[test]
+    fn a_wrong_repeat_count_is_found() {
+        let (p, h) = hints("The Long Hallway", "[R8 F ]");
+        assert!(h[1].text.contains("MORE times than 8"), "{h:?}");
+        assert_eq!(h[2].text, "Change the outlined REPEAT from 8 to 10.");
+        assert_eq!(h[2].block, Some(p.main[0].id));
+    }
+
+    #[test]
+    fn a_wrong_check_is_found_and_works_in_every_world() {
+        let (p, h) = hints("Stone or Lava?", "[R5 [E5 M | P ] F F ]");
+        assert_eq!(h[2].text, "Change the outlined IF / ELSE to check \"stone ahead\" instead of \"lava ahead\".");
+        assert_eq!(h[2].block, Some(p.main[0].body[0].id));
+    }
+
+    #[test]
+    fn far_from_done_says_which_way_to_go() {
+        // The game has just said the miner isn't in the portal, so Bit starts
+        // with where to go instead of repeating it.
+        let (_, h) = hints("Turn the Corner", "F");
+        assert_eq!(h[0].text, "From where the miner stops, the portal is 5 squares away. The way there starts straight AHEAD.");
+        assert!(h.last().unwrap().text.starts_with("Hint: "), "the level's own hint comes last");
+    }
+
+    #[test]
+    fn an_extra_block_is_removed_not_swapped_for_an_empty_function() {
+        // CALL FUNCTION is in this palette, but the function is empty, so
+        // "change it into CALL FUNCTION" would only be a confusing "delete it".
+        let (p, h) = hints("Lava Maybe", "[R7 [I5 P F ] F ]");
+        assert!(h[1].text.contains("extra"), "{h:?}");
+        assert_eq!(h[2].text, "Remove the outlined block. It doesn't belong there.");
+        assert_eq!(h[2].block, Some(p.main[0].body[0].body[1].id));
+    }
+
+    #[test]
+    fn fixes_never_win_just_because_the_game_stops_at_the_portal() {
+        // Swapping PLACE BLOCK for FORWARD walks 20 squares down a 10-square
+        // hallway; it "wins" only because the game stops at the portal.
+        let (p, h) = hints("The Long Hallway", "[R10 F P ]");
+        assert_eq!(h[2].text, "Remove the outlined block. It doesn't belong there.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].body[1].id));
+        // Two steps are missing after the loop: a third lap would reach the
+        // portal and then walk into the wall, so that's not a fix.
+        let (_, h) = hints("Crossroads", "[R2 F F [E1 L | R ] ]");
+        assert!(h.iter().all(|x| !x.text.contains("REPEAT")), "{h:?}");
+    }
+
+    #[test]
+    fn add_hints_point_next_to_the_outlined_block() {
+        let (_, h) = hints("First Steps", "F F F");
+        assert!(h[1].text.starts_with("Something is missing right AFTER the outlined block"), "{h:?}");
+        let (p, h) = hints("Rocky Stairs", "[R4 M F R M F L ]");
+        assert_eq!(h[2].text, "Add a FORWARD block right AFTER the outlined REPEAT block - below it, not inside it.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].id));
+    }
+
+    #[test]
+    fn winning_programs_with_wasted_steps() {
+        // The fifth FORWARD comes after the win, so it never runs.
+        let (p, h) = hints("First Steps", "F F F F F");
+        assert!(h[0].text.contains("never runs"), "{h:?}");
+        assert_eq!(h[1].block, Some(p.main[4].id));
+        // REPEAT 11 wins on the 10th step; the 11th would hit the wall.
+        let (_, h) = hints("The Long Hallway", "[R11 F ]");
+        assert!(h[0].text.contains("only because the game stops it"), "{h:?}");
+        assert!(h[0].text.contains("REPEAT"), "{h:?}");
+        // Repeated steps in a function level get the FUNCTION tip.
+        let (_, h) = hints("Teach a New Word", "M F M F M F M F F");
+        assert!(h.iter().any(|x| x.text.contains("FUNCTION once")), "{h:?}");
+    }
+
+    #[test]
+    fn checks_are_never_changed_to_repeat_an_outer_check() {
+        // The empty "IF path ahead" sits in the ELSE of "IF path to right", so
+        // changing it to check "path to right" would make it always false.
+        // Any other check would only steer around the empty part, so Bit says
+        // to fill it.
+        let (p, h) = hints("Rubble Maze", "[W7 [E2 R F | [E0 | [E3 M | L ] ] ] ]");
+        assert_eq!(h[2].text, "Add a FORWARD block inside the outlined IF / ELSE block.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].body[0].els[0].id));
+        // Checking "path to right" inside "IF path to right" is never offered either.
+        let (_, h) = hints("The Maze", "[W7 [E2 R F | [E0 F R | L ] ] ]");
+        assert!(h.iter().all(|x| !x.text.contains("instead of \"path ahead\"")), "{h:?}");
+    }
+
+    #[test]
+    fn working_programs_skip_the_levels_general_hint() {
+        let (_, h) = hints("The Long Hallway", "[R11 F ]");
+        assert!(h.iter().all(|x| !x.text.starts_with("Hint: ")), "{h:?}");
+    }
+
+    #[test]
+    fn changing_levels_suggest_checking_before_mining() {
+        // A plain MINE would swing at thin air in versions without the stone.
+        let l = level("Maybe a Stone");
+        let p = Program::deserialize("F F F F").unwrap();
+        let seed = (0..500).find(|&s| simulate(&p, World::from_level(l, s)).is_err()).expect("a world with the stone");
+        let h = ladder(l, &p, &World::from_level(l, seed), seed);
+        assert!(h[0].text.contains("IF \"stone ahead\""), "{h:?}");
+        // Already inside "WHILE stone ahead": a plain MINE is the right advice.
+        let (_, h) = hints("Stone Tunnel", "[W3 F ]");
+        assert!(h[0].text.starts_with("The outlined block walks into a block the miner could MINE"), "{h:?}");
+    }
+
+    #[test]
+    fn luck_in_one_world_is_not_enough() {
+        // Walks straight through: wins only in worlds without stones.
+        let l = level("Surprise Stones");
+        let p = Program::deserialize("[R10 F ]").unwrap();
+        let seed = (0..500).find(|&s| simulate(&p, World::from_level(l, s)).is_ok()).expect("a stone-free world");
+        let h = ladder(l, &p, &World::from_level(l, seed), seed);
+        assert!(h[0].text.contains("not in every version"), "{h:?}");
+        assert!(h[1].text.contains("\"stone ahead\""), "{h:?}");
+    }
+
+    #[test]
+    fn long_winning_programs_get_a_pattern() {
+        let (p, h) = hints("The Long Hallway", "F F F F F F F F F F");
+        assert!(h[0].text.contains("3 stars"), "{h:?}");
+        assert_eq!(h[1].text, "Starting at the outlined block, the same block happens 10 times in a row.");
+        assert_eq!(h[2].text, "Put that block inside a REPEAT 10 block. That saves 8 blocks!");
+        assert_eq!(h[2].block, Some(p.main[0].id));
+
+        let (_, h) = hints("Crystal Staircase", "F R F L F R F L F R F L F R F L F");
+        assert!(h[2].text.starts_with("Put those 4 blocks inside a REPEAT 4 block"), "{h:?}");
+    }
+
+    #[test]
+    fn empty_and_solved_programs() {
+        let (_, h) = hints("First Steps", "");
+        assert!(h[0].text.starts_with("Let's start!"));
+        let (_, h) = hints("Teach a New Word", "/ M F");
+        assert!(h[0].text.contains("MAIN is empty"));
+        let (_, h) = hints("First Steps", "F F F F");
+        assert!(h[0].text.contains("already solves"));
+    }
+
+    /// Every solution with one simple block taken out is one change from
+    /// working, so Bit must always find a fix for it, and every hint must
+    /// point at a block that's really in the program.
+    #[test]
+    fn every_level_finds_a_removed_block() {
+        fn simple_ids(list: &[Node], out: &mut Vec<u32>) {
+            for n in list {
+                if !n.kind.is_container() {
+                    out.push(n.id);
+                }
+                simple_ids(&n.body, out);
+                simple_ids(&n.els, out);
+            }
+        }
+        fn without(list: &[Node], id: u32) -> Vec<Node> {
+            list.iter()
+                .filter(|n| n.id != id)
+                .map(|n| Node { body: without(&n.body, id), els: without(&n.els, id), ..n.clone() })
+                .collect()
+        }
+        for l in LEVELS {
+            let sol = Program::deserialize(l.solution).unwrap();
+            let mut ids = Vec::new();
+            simple_ids(&sol.main, &mut ids);
+            simple_ids(&sol.func, &mut ids);
+            for id in ids {
+                let p = Program { main: without(&sol.main, id), func: without(&sol.func, id) };
+                let start = World::from_level(l, 7);
+                if p.main.is_empty() || (simulate(&p, start.clone()).is_ok() && failing_test_world(l, &p, 7).is_none()) {
+                    continue; // nothing to fix
+                }
+                let h = ladder(l, &p, &start, 7);
+                assert!(h[0].text.contains("ONE change"), "{}: {} -> {h:?}", l.name, p.serialize());
+                for hint in &h {
+                    if let Some(b) = hint.block {
+                        assert!(contains(&p.main, b) || contains(&p.func, b), "{}: hint points at a missing block", l.name);
+                    }
+                }
+            }
+        }
+    }
 }

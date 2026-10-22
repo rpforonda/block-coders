@@ -197,7 +197,7 @@ const W1: &[Question] = &[
         program: "M F F F",
         map: &["TTTTTT", "T>..PT", "TTTTTT"],
         choices: Choices::Text(&["The pickaxe swings at thin air", "It reaches the portal", "It digs a tunnel"]),
-        explain: "MINE only works when there's stone or ore in front. Here the square ahead is empty, so the program stops with an error.",
+        explain: "MINE only works when there's stone or ore in front. Here the square ahead is empty, so the pickaxe swings at thin air and the program stops.",
         proof: Proof::Ends(End::NothingToMine),
         ..Q
     },
@@ -388,7 +388,7 @@ const W2: &[Question] = &[
         prompt: "Which program ends up exactly the same as this one?",
         program: "[R4 R ]",
         choices: Choices::Programs(&["[R2 L L ]", "[R2 R ]", "R"]),
-        explain: "Four turns the same way spin the miner all the way round, back to where it started. Four left turns do that too.",
+        explain: "Four turns the same way spin the miner all the way round, back to where it started. Repeating two left turns twice makes four left turns, so it does that too.",
         proof: Proof::SameResult,
         ..Q
     },

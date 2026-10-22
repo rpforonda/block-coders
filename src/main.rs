@@ -3,6 +3,7 @@
 mod art;
 mod check;
 mod editor;
+mod hints;
 mod keyboard;
 mod levels;
 mod play;

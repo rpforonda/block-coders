@@ -3,11 +3,12 @@
 use crate::art::{draw_tex, shade, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
+use crate::hints::{self, Hint};
 
 /// How many changes Undo can go back.
 const HISTORY: usize = 100;
 use crate::levels::{Level, CHAPTERS, LEVELS};
-use crate::program::{contains, simulate, Action, Program, Step, Vm};
+use crate::program::{contains, Action, Program, Step, Vm};
 use crate::save::{Progress, Saved};
 use crate::sound::{Sfx, Sounds};
 use crate::ui::*;
@@ -130,6 +131,10 @@ pub struct Play {
     restoring: bool,
     /// The highlighted block whose tab we last switched to.
     followed: Option<u32>,
+    /// Smart hints for the program and world they were worked out for
+    /// (serialized program, seed), and how many have been shown.
+    hints: Option<(String, u64, Vec<Hint>)>,
+    hints_shown: usize,
 }
 
 fn fresh_seed() -> u64 {
@@ -173,6 +178,8 @@ impl Play {
             redo_stack: Vec::new(),
             restoring: false,
             followed: None,
+            hints: None,
+            hints_shown: 0,
         };
         p.reset_run();
         p
@@ -205,6 +212,26 @@ impl Play {
         self.msg_kind = kind;
     }
 
+    /// Bit's next hint for this program in this world: each press goes a step
+    /// further, from a nudge to the exact change.
+    fn show_hint(&mut self) {
+        let key = self.program.serialize();
+        let fresh = !matches!(&self.hints, Some((k, s, _)) if *k == key && *s == self.seed);
+        if fresh {
+            let ladder = hints::ladder(self.level, &self.program, &self.start, self.seed);
+            self.hints = Some((key, self.seed, ladder));
+            self.hints_shown = 0;
+        }
+        let Some((_, _, ladder)) = &self.hints else { return };
+        let i = self.hints_shown.min(ladder.len() - 1);
+        let hint = ladder[i].clone();
+        let more = i + 1 < ladder.len();
+        self.hints_shown += 1;
+        self.editor.hint = hint.block;
+        let text = if more { format!("{}  (Still stuck? Press Hint again.)", hint.text) } else { hint.text };
+        self.say(text, MsgKind::Info);
+    }
+
     fn goal_text(&self) -> String {
         let w = &self.start;
         let mut parts = Vec::new();
@@ -230,6 +257,7 @@ impl Play {
     }
 
     fn reset_run(&mut self) {
+        self.editor.hint = None;
         self.world = self.start.clone();
         self.state = RunState::Editing;
         self.vm = None;
@@ -351,16 +379,11 @@ impl Play {
     }
 
     fn on_win(&mut self, sfx: &Sounds, progress: &mut Progress) {
-        if self.level.is_random() {
-            for i in 0..80u64 {
-                let seed = self.seed.wrapping_add(i.wrapping_mul(0x9E37_79B9)).wrapping_add(1);
-                if let Err(e) = simulate(&self.program, World::from_level(self.level, seed)) {
-                    self.say("It worked in this world... but not in every world!", MsgKind::Error);
-                    self.modal = Modal::OtherWorld(seed, e);
-                    sfx.play(Sfx::Fail);
-                    return;
-                }
-            }
+        if let Some((seed, e)) = hints::failing_test_world(self.level, &self.program, self.seed) {
+            self.say("It worked in this world... but not in every world!", MsgKind::Error);
+            self.modal = Modal::OtherWorld(seed, e);
+            sfx.play(Sfx::Fail);
+            return;
         }
         let used = self.program.block_count();
         let par = self.level.par;
@@ -582,8 +605,7 @@ impl Play {
             if self.level.intro.is_some() {
                 self.modal = Modal::Intro;
             } else {
-                let h = format!("Hint: {}", self.level.hint);
-                self.say(h, MsgKind::Info);
+                self.show_hint();
             }
         }
         let snd = if sfx.muted { "Sound: off" } else { "Sound: on" };
@@ -607,7 +629,7 @@ impl Play {
         // ---- Editor ----
         // Show the tab holding the running (or failed) block, but only when that
         // block changes, so kids can still switch tabs themselves afterwards.
-        let highlighted = self.running_id.or(self.error_id);
+        let highlighted = self.running_id.or(self.error_id).or(self.editor.hint);
         if highlighted != self.followed {
             self.followed = highlighted;
             if let Some(id) = highlighted {
@@ -671,6 +693,7 @@ impl Play {
     }
 
     fn program_changed(&mut self, progress: &mut Progress) {
+        self.editor.hint = None;
         if self.state != RunState::Editing {
             self.reset_run();
         }
@@ -893,8 +916,7 @@ impl Play {
         paragraph(&self.msg, tx + 10.0, r.y + 20.0, r.w - 136.0, 19.0, color);
         if ui.button(Rect::new(tx, r.y + r.h - 42.0, 110.0, 32.0), "Hint", rgb8(200, 160, 40), 18.0) {
             sfx.play(Sfx::Click);
-            let h = format!("Hint: {}", self.level.hint);
-            self.say(h, MsgKind::Info);
+            self.show_hint();
         }
         if ui.button(Rect::new(tx + 122.0, r.y + r.h - 42.0, 110.0, 32.0), "Goal", rgb8(90, 90, 110), 18.0) {
             sfx.play(Sfx::Click);
