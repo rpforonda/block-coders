@@ -691,6 +691,26 @@ const W4: &[Question] = &[
         proof: Proof::Count(TURNS),
         ..Q
     },
+    // Functions keep coming back, so later worlds check them too.
+    Question {
+        id: "w4-16",
+        prompt: "How many stones does the miner mine?",
+        program: "C C C C / [I3 M ] F",
+        map: &["TTTTTTT", "T>#.#PT", "TTTTTTT"],
+        choices: Choices::Text(&["2", "4", "0"]),
+        explain: "The function runs 4 times, but its IF only mines when there's stone ahead. That happens twice.",
+        proof: Proof::Count(&[Mine]),
+        ..Q
+    },
+    Question {
+        id: "w4-17",
+        prompt: "Which program reaches the portal?",
+        map: &["TTTTTTTT", "T>#.#.PT", "TTTTTTTT"],
+        choices: Choices::Programs(&["C C C C C / [I3 M ] F", "C C C C C / M F", "C C C C C / F"]),
+        explain: "The function checks first: IF there's stone ahead, it mines. So it works for stone and for empty ground. Always mining fails on empty ground. Never mining walks into the stone.",
+        proof: Proof::OnlyWinner,
+        ..Q
+    },
 ];
 
 // ===================== World 5: While loops & algorithms =====================
@@ -847,6 +867,25 @@ const W5: &[Question] = &[
         ]),
         explain: "Every time round, IF LAVA AHEAD places a bridge, then the miner steps. 2 lava pools, 2 blocks: just enough.",
         proof: Proof::Ends(End::Wins),
+    },
+    Question {
+        id: "w5-16",
+        prompt: "How many times does the function run?",
+        program: "[W0 C ] / F",
+        map: &["TTTTTTT", "T>....T", "TTTTTTT"],
+        choices: Choices::Text(&["4", "5", "1"]),
+        explain: "WHILE PATH AHEAD calls the function every time there's room to step. Each call takes 1 step, and there are 4 squares before the trees.",
+        proof: Proof::Count(&[Forward]),
+        ..Q
+    },
+    Question {
+        id: "w5-17",
+        prompt: "Which program reaches the portal?",
+        map: &["TTTTTT", "T>..TT", "TTT.TT", "TTT.TT", "TTTPTT", "TTTTTT"],
+        choices: Choices::Programs(&["C R C / [W0 F ]", "C R C / F F", "C L C / [W0 F ]"]),
+        explain: "The function walks WHILE there's path ahead, so it fits a hallway of any length. Call it, TURN RIGHT to face down, call it again. Two FORWARDs stop short, and TURN LEFT faces the trees.",
+        proof: Proof::OnlyWinner,
+        ..Q
     },
 ];
 

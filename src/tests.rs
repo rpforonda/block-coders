@@ -23,6 +23,10 @@ fn level_list_is_sane() {
             assert!(l.intro.is_some(), "{}: first level of a world needs an intro", l.name);
         }
         assert!(!l.hint.is_empty() && !l.lesson.is_empty(), "{}: needs a hint and lesson", l.name);
+        // Kids only ever see blocks, so Bit talks in block words, not typed code.
+        for text in [l.hint, l.lesson, l.intro.map_or("", |i| i.1)] {
+            assert!(!text.contains(['{', '}', ';']), "{}: uses typed-code symbols", l.name);
+        }
     }
     for old in crate::levels::LEGACY_ORDER {
         level(old);
@@ -527,7 +531,7 @@ fn tampered_player_list_is_cleaned_on_load() {
 // ------------------------------ World Checks ------------------------------
 
 mod world_checks {
-    use crate::check::{pick, run, world_for, Run, ASKED, CHECKS, PASS};
+    use crate::check::{changes, pick, run, world_for, Run, ASKED, CHECKS, MAX_CHANGING, PASS};
     use crate::levels::{CHAPTERS, LEVELS};
     use crate::program::Program;
     use crate::questions::{Choices, End, Proof, Question, BANKS};
@@ -538,10 +542,6 @@ mod world_checks {
         Program::deserialize(src).unwrap_or_else(|| panic!("{}: can't parse program {src:?}", q.id))
     }
 
-    fn is_random(q: &Question) -> bool {
-        q.map.iter().any(|row| row.contains(['?', '!', '*', '$', '~', '&', 'p']))
-    }
-
     /// Everything about how a run ended, for comparing two programs.
     fn result(r: &Run) -> (End, (i32, i32), crate::world::Dir, u32, Vec<crate::world::Tile>) {
         (r.end, r.world.pos, r.world.dir, r.world.blocks, r.world.tiles.clone())
@@ -549,7 +549,7 @@ mod world_checks {
 
     fn the_program(q: &'static Question) -> Run {
         assert!(!q.program.is_empty(), "{}: needs a program", q.id);
-        assert!(!is_random(q), "{}: this kind of question needs a map that never changes", q.id);
+        assert!(!changes(q), "{}: this kind of question needs a map that never changes", q.id);
         run(&parse(q, q.program), world_for(q, 0))
     }
 
@@ -590,8 +590,11 @@ mod world_checks {
         assert!(PASS as f32 >= ASKED as f32 * 0.75, "passing needs at least 75%");
         let mut ids = std::collections::HashSet::new();
         for (c, bank) in BANKS.iter().enumerate() {
-            // Each retry has to include at least 3 questions from outside the last attempt.
-            assert!(bank.len() >= ASKED + 3, "bank {c} has only {} questions", bank.len());
+            // Each retry has to include at least 3 questions from outside the last attempt,
+            // and at most MAX_CHANGING of an attempt can be on a changing map.
+            let changing = bank.iter().filter(|q| changes(q)).count();
+            let usable = bank.len() - changing + changing.min(MAX_CHANGING);
+            assert!(usable >= ASKED + 3, "bank {c} has only {usable} usable questions");
             for q in *bank {
                 assert!(ids.insert(q.id), "duplicate question id {}", q.id);
                 assert!(!q.id.contains([',', ';']), "{}: ids are saved, so no , or ;", q.id);
@@ -665,7 +668,7 @@ mod world_checks {
                 }
                 Proof::OnlyWinner => {
                     let Choices::Programs(ps) = q.choices else { panic!("{}: needs program choices", q.id) };
-                    let seeds = if is_random(q) { 300 } else { 1 };
+                    let seeds = if changes(q) { 300 } else { 1 };
                     for (i, p) in ps.iter().enumerate() {
                         let prog = parse(q, p);
                         let wins = (0..seeds).filter(|&s| run(&prog, world_for(q, s)).end == End::Wins).count();
@@ -692,6 +695,7 @@ mod world_checks {
                 ids.sort();
                 ids.dedup();
                 assert_eq!(ids.len(), ASKED, "a question came up twice");
+                assert!(qs.iter().filter(|q| changes(q)).count() <= MAX_CHANGING, "too many changing-map questions");
                 if !last.is_empty() {
                     let new = qs.iter().filter(|q| !last.iter().any(|id| id == q.id)).count();
                     assert!(new >= 3, "only {new} new questions on a retry");

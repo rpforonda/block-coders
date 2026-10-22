@@ -165,6 +165,12 @@ pub static LEVELS: &[Level] = &[
         maps: &[&["TTTTTTTT", "T>.TTTTT", "TT.E.TTT", "TTTTE.PT", "TTTTTTTT"]],
         palette: P_TURN,
         par: 11,
+        intro: Some((
+            "Finding bugs with STEP",
+            "A mistake in a program is called a BUG. Fixing it is called DEBUGGING.\n\n\
+             Long programs often have bugs. Press STEP instead of RUN to go one block at a time. \
+             The block that is running lights up. Watch for the moment the miner goes the wrong way!",
+        )),
         hint: "Right, then left, then right, then left... After each turn, count how many steps to the next corner.",
         lesson: "You used both turns in a long sequence. Tracking direction in your head is real programmer brain-work!",
         solution: "F R F L F F R F L F F",
@@ -207,7 +213,7 @@ pub static LEVELS: &[Level] = &[
              You need ALL the diamonds before the portal will light up. One is hiding up above the path!",
         )),
         hint: "To mine the diamond above the path, stand under it, turn to face it, mine, then turn back.",
-        lesson: "You broke a big task into small steps. That's called DECOMPOSITION - a real programmer skill!",
+        lesson: "You broke a big job into small steps: walk, turn, mine, turn back. Splitting a big problem into small ones is called DECOMPOSITION.",
         solution: "M F F F L M R M F F F",
         ..BASE
     },
@@ -224,7 +230,7 @@ pub static LEVELS: &[Level] = &[
              Your backpack starts empty - mine some stone first!",
         )),
         hint: "Mine both stones to get 2 blocks. Then place one, step forward, place the other, step forward.",
-        lesson: "You saved blocks in your backpack and used them later. Programs store information to use later too - in VARIABLES.",
+        lesson: "You saved blocks in your backpack and used them later. Programs do this too: a game SAVES your score now and USES it later.",
         solution: "M F M F P F P F F F",
         ..BASE
     },
@@ -364,7 +370,7 @@ pub static LEVELS: &[Level] = &[
              Walking along one side of the pond is a pattern... and walking all four sides is a pattern too!",
         )),
         hint: "One side of the pond is: forward 4 times, then turn right. Do that 4 times.",
-        lesson: "NESTED LOOPS - a loop inside a loop. Programmers use them to draw grids, sort lists, and build game maps.",
+        lesson: "NESTED LOOPS - a loop inside a loop. The inside loop walked one side, and the outside loop did that for all 4 sides!",
         floor: Floor::Dirt,
         solution: "[R4 [R4 F ] R ]",
         ..BASE
@@ -406,8 +412,9 @@ pub static LEVELS: &[Level] = &[
         intro: Some((
             "New: FUNCTIONS",
             "A FUNCTION is like teaching the computer a brand new word.\n\n\
-             Click the FUNCTION tab above your program and put MINE and FORWARD there. \
-             Then, in MAIN, use CALL FUNCTION to run both steps with just one block!\n\n\
+             Above your program are two buttons: MAIN and FUNCTION. MAIN is your normal program. \
+             Click FUNCTION and put MINE and FORWARD there. Then click MAIN and add CALL FUNCTION: \
+             that one block runs both steps!\n\n\
              (No REPEAT in this world's first levels - functions only!)",
         )),
         hint: "Function: mine, forward. Main: call it 4 times, then one more forward.",
@@ -602,9 +609,10 @@ pub static LEVELS: &[Level] = &[
         start_blocks: 5,
         intro: Some((
             "New block: IF / ELSE",
-            "Every other square is either stone OR lava - but which one? It changes every time!\n\n\
-             IF / ELSE picks between two choices: IF the check is true, do the top part. \
-             ELSE (otherwise), do the bottom part.",
+            "Every other square is stone OR lava. It changes every time!\n\n\
+             IF / ELSE has two parts. If the check is true, the TOP part runs. If not, the BOTTOM part runs. \
+             ELSE just means \"otherwise\".\n\n\
+             Try: IF stone ahead, MINE. ELSE, PLACE BLOCK.",
         )),
         hint: "IF stone ahead: mine. ELSE: place a block. Then step forward twice. Repeat that 5 times.",
         lesson: "IF / ELSE means the computer always does exactly ONE of the two choices. Never both, never neither.",
@@ -626,10 +634,11 @@ pub static LEVELS: &[Level] = &[
         intro: Some((
             "Which way?",
             "At the end of this road, the path turns left OR right - you won't know which until you get there.\n\n\
-             The miner can LOOK: 'path to left' is true when there's open ground on the miner's left side.",
+             The miner can LOOK: 'path to left' is true when there's open ground on the miner's left side. \
+             Click the white label on the IF / ELSE block to choose what it checks.",
         )),
         hint: "Walk to the end. IF path to left: turn left. ELSE: turn right. Then walk 2 more steps.",
-        lesson: "The miner used its senses to choose a direction. Robots use sensors exactly like this!",
+        lesson: "The miner looked, then chose a direction. Real robots have SENSORS - like eyes - that check the world just like this!",
         floor: Floor::Sand,
         solution: "[R3 F ] [E1 L | R ] F F",
         ..BASE
@@ -672,7 +681,7 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(8),
         start_blocks: 9,
         hint: "Each square could be stone, lava, or nothing. Check for stone, check for lava, then step.",
-        lesson: "Your program handles three different situations. The more cases you plan for, the stronger your code!",
+        lesson: "Stone, lava or nothing: your two IFs handled all three. The more cases you plan for, the stronger your code!",
         floor: Floor::Sand,
         solution: "[R10 [I3 M ] [I5 P ] F ]",
         ..BASE
@@ -817,7 +826,7 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(9),
         start_blocks: 6,
         hint: "WHILE lava ahead: place, forward. Then step onto the ground, turn left, and walk to the portal.",
-        lesson: "You built a bridge exactly as long as it needed to be - no more, no less. Efficient!",
+        lesson: "You built a bridge exactly as long as it needed to be - no more, no less. Not one block wasted!",
         floor: Floor::Deepslate,
         solution: "[W5 P F ] F L F F",
         ..BASE
@@ -839,8 +848,8 @@ pub static LEVELS: &[Level] = &[
             "This road only ever turns RIGHT, but the lengths change every time.\n\n\
              Put an IF / ELSE inside a WHILE: while you're not at the portal, IF there's a path ahead go forward, ELSE turn right.",
         )),
-        hint: "WHILE not at portal: IF path ahead { forward } ELSE { turn right }",
-        lesson: "A tiny rule, repeated, can follow any road. That's the magic of algorithms!",
+        hint: "WHILE not at portal. Inside it, an IF / ELSE: IF path ahead, FORWARD. ELSE, TURN RIGHT.",
+        lesson: "A tiny rule, repeated, can follow any road. A recipe of steps like this is called an ALGORITHM. You'll meet more soon!",
         floor: Floor::Deepslate,
         solution: "[W7 [E0 F | R ] ]",
         ..BASE
@@ -876,8 +885,9 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(9),
         intro: Some((
             "Left AND right",
-            "Now the road turns both ways! Your program needs to LOOK and DECIDE at every step.\n\n\
-             You can put an IF / ELSE inside another IF / ELSE to choose between three things!",
+            "Now the road can turn left OR right. That's 3 choices: forward, left or right.\n\n\
+             One IF / ELSE picks between 2 things. For 3, put a second IF / ELSE in the ELSE part.\n\n\
+             First ask: path ahead? If not, ask: path to left?",
         )),
         hint: "WHILE not at portal: IF path ahead, go forward. ELSE, IF path to left, turn left, ELSE turn right.",
         lesson: "You combined loops and decisions. That's how self-driving robots follow a road!",
@@ -943,7 +953,7 @@ pub static LEVELS: &[Level] = &[
              That means: if you can turn right, do it. If not, go straight. If you can't go straight, turn left.\n\n\
              A step-by-step recipe that always works is called an ALGORITHM.",
         )),
-        hint: "WHILE not at portal: IF path to right { turn right, forward } ELSE { IF path ahead { forward } ELSE { turn left } }",
+        hint: "WHILE not at portal: IF path to right, TURN RIGHT then FORWARD. ELSE, use a second IF / ELSE: IF path ahead, FORWARD. ELSE, TURN LEFT.",
         lesson: "You programmed an ALGORITHM! The 'right-hand rule' solves mazes - and computers use algorithms for everything.",
         floor: Floor::Deepslate,
         solution: "[W7 [E2 R F | [E0 F | L ] ] ]",
@@ -1005,12 +1015,12 @@ pub static LEVELS: &[Level] = &[
         start_blocks: 8,
         intro: Some((
             "Welcome to the Nether Fortress",
-            "These are MASTER challenges. Every level mixes everything you've learned, and every level changes each time.\n\n\
-             Real programmers solve big problems by building a little, testing, and building a little more. \
-             Use STEP to watch your code closely. You've got this!",
+            "These are MASTER challenges. Each level mixes everything you've learned, and changes every time.\n\n\
+             Tip: build a little, press RUN to test it, then add a little more. \
+             If something goes wrong, use STEP to find the bug. You've got this!",
         )),
         hint: "WHILE not at portal: IF stone, mine. IF lava, place. IF path ahead, forward, ELSE turn right.",
-        lesson: "Three checks and a turn rule, inside one loop. You're thinking like a real programmer!",
+        lesson: "At every step your WHILE loop checks for stone, checks for lava, then picks a way to go. One loop handled the whole sea!",
         floor: Floor::Nether,
         solution: "[W7 [I3 M ] [I5 P ] [E0 F | R ] ]",
         ..BASE
@@ -1027,7 +1037,7 @@ pub static LEVELS: &[Level] = &[
         par: 9,
         max_blocks: Some(12),
         start_blocks: 9,
-        hint: "Function: WHILE lava ahead { place, forward }, then WHILE path ahead { forward }. Call it, call it, turn right, call it!",
+        hint: "Function: WHILE lava ahead, PLACE BLOCK and FORWARD. Then WHILE path ahead, FORWARD. Main: call it, call it, turn right, call it!",
         lesson: "WHILE loops inside a function: one small tool that handles bridges of ANY length.",
         floor: Floor::Nether,
         solution: "C C R C / [W5 P F ] [W0 F ]",
@@ -1062,7 +1072,7 @@ pub static LEVELS: &[Level] = &[
         par: 14,
         max_blocks: Some(17),
         hint: "Function: look left (mine if diamond), look right (mine if diamond), face forward. \
-               Main: WHILE path ahead { forward, call }. Then head down to the portal.",
+               Main: WHILE path ahead, FORWARD and CALL FUNCTION. Then head down to the portal.",
         lesson: "A WHILE loop that calls a function full of IFs. That's how real programs are structured!",
         floor: Floor::Nether,
         solution: "[W0 F C ] R F F / L [I4 M ] R R [I4 M ] L",
@@ -1081,7 +1091,7 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(12),
         start_blocks: 4,
         hint: "Before your maze algorithm makes a choice, check: IF lava ahead, place a block.",
-        lesson: "Your algorithm stays calm even when the maze is full of danger. Robust code handles surprises!",
+        lesson: "One extra IF, and your maze ALGORITHM works even with lava in the way. Good code plans for surprises!",
         floor: Floor::Nether,
         solution: "[W7 [I5 P ] [E2 R F | [E0 F | L ] ] ]",
         ..BASE
@@ -1105,8 +1115,9 @@ pub static LEVELS: &[Level] = &[
         start_blocks: 6,
         intro: Some((
             "The Final Challenge",
-            "This is it - the last level! The road could be ANY shape, and any square might hold stone or lava.\n\n\
-             Everything you've learned is in here somewhere. Take your time, test often, and use STEP to find bugs.",
+            "This is the last level! The road can be ANY shape, and any square might hold stone or lava.\n\n\
+             You'll need a WHILE loop, IFs for stone and lava, and IF / ELSE to steer. \
+             Build it one piece at a time, and use STEP to find bugs.",
         )),
         hint: "WHILE not at portal: IF stone, mine. IF lava, place. Then steer: IF path ahead forward, ELSE IF path to left turn left, ELSE turn right.",
         lesson: "You're a MASTER CODER! Sequences, loops, functions, decisions and algorithms are the same ideas behind every app and game in the world.",

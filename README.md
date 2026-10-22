@@ -54,8 +54,9 @@ like real software.
   colors like a code editor. This is the bridge from blocks to typing code.
 - **World Checks.** At the end of each world, a 10-question check asks kids to
   read short programs and work out what they do. 8 right (75%) opens the next
-  world, and retries are unlimited, with mostly new questions each time. The
-  Nether Fortress opens once all five checks are passed.
+  world, and retries are unlimited, with mostly new questions each time. Each
+  check asks at most 2 of the hardest "which program works every time?"
+  questions. The Nether Fortress opens once all five checks are passed.
 - **Stars for short programs.** Three stars means you matched the shortest
   solution, which rewards using loops and functions well.
 - **Up to 6 players.** Each player has their own name, a miner with their own
