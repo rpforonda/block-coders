@@ -238,6 +238,8 @@ pub struct Editor {
     follow_cursor: bool,
     last_highlight: Option<u32>,
     drag: Option<Drag>,
+    /// The block a hint is pointing at (outlined in yellow).
+    pub hint: Option<u32>,
 }
 
 impl Editor {
@@ -249,6 +251,7 @@ impl Editor {
             follow_cursor: true,
             last_highlight: None,
             drag: None,
+            hint: None,
         }
     }
 
@@ -403,16 +406,18 @@ impl Editor {
             }
             self.follow_cursor = false;
         }
-        if running.is_some() && running != self.last_highlight {
+        // Scroll the running block (or the one a hint points at) into view.
+        let shown = running.or(self.hint);
+        if shown.is_some() && shown != self.last_highlight {
             if let Some(r) = rows.iter().find(|r| {
-                r.kind == RowKind::Block && list_ref(p, &r.list).and_then(|l| l.get(r.index)).map(|n| n.id) == running
+                r.kind == RowKind::Block && list_ref(p, &r.list).and_then(|l| l.get(r.index)).map(|n| n.id) == shown
             }) {
                 if r.y - self.scroll > rows_area.h - ROW_H - 10.0 || r.y - self.scroll < 0.0 {
                     self.scroll = r.y - rows_area.h / 2.0;
                 }
             }
         }
-        self.last_highlight = running;
+        self.last_highlight = shown;
         self.scroll = self.scroll.clamp(0.0, (content_h - rows_area.h).max(0.0));
 
         let top = rows_area.y - self.scroll;
@@ -522,6 +527,9 @@ impl Editor {
             }
             if Some(node.id) == error {
                 draw_rectangle_lines(rect.x - 4.0, rect.y - 4.0, rect.w + 8.0, rect.h + 8.0, 4.0, rgb8(255, 60, 60));
+            } else if Some(node.id) == self.hint {
+                let c = Color::new(1.0, 0.85, 0.15, 0.7 + 0.3 * hl_pulse);
+                draw_rectangle_lines(rect.x - 4.0, rect.y - 4.0, rect.w + 8.0, rect.h + 8.0, 4.0, c);
             }
         }
 

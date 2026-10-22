@@ -29,7 +29,14 @@ like real software.
 ## Features
 
 - **Bit, a friendly robot guide**, explains each new idea when it first appears.
-  The *Hint* button helps when a kid is stuck.
+- **Smart hints.** *Hint* looks at the kid's actual program, not just the
+  level. Bit tries every single change in the game's own simulator. If one
+  change would solve the level (in every version of a changing level), each
+  press of *Hint* says a little more: first a nudge, then a yellow outline on
+  the block, then the exact change ("Change the REPEAT from 8 to 10"). If no
+  single change is enough, Bit explains what went wrong and which way the goal
+  is. A long program that already works gets help spotting a pattern for a
+  loop. It all runs on the device, with no network and no AI service.
 - **Drag and drop, with undo.** Drag blocks from the palette or rearrange the
   program by dragging. Every change can be undone and redone.
 - **Step-by-step debugging.** *STEP* runs one block at a time, and the running
