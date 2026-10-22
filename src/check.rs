@@ -25,6 +25,16 @@ pub const PASS: u32 = 8;
 /// How many World Checks there are (one after every world but the last).
 pub const CHECKS: usize = BANKS.len();
 
+/// "Which program works every time?" questions make kids picture every
+/// version of a changing map at once. They're the hardest kind, so an
+/// attempt asks at most this many.
+pub const MAX_CHANGING: usize = 2;
+
+/// Whether the question's map changes between versions.
+pub fn changes(q: &Question) -> bool {
+    q.map.iter().any(|row| row.chars().any(|c| random_meaning(c).is_some()))
+}
+
 /// Picks the questions for an attempt. Every question that wasn't in the
 /// previous attempt comes first, so each retry is mostly new questions.
 pub fn pick(bank: &'static [Question], last: &[String], rng: &mut Rng) -> Vec<&'static Question> {
@@ -36,7 +46,20 @@ pub fn pick(bank: &'static [Question], last: &[String], rng: &mut Rng) -> Vec<&'
     let (mut fresh, mut seen): (Vec<_>, Vec<_>) = bank.iter().partition(|q| !last.iter().any(|id| id == q.id));
     shuffle(&mut fresh, rng);
     shuffle(&mut seen, rng);
-    let mut out: Vec<_> = fresh.into_iter().chain(seen).take(ASKED).collect();
+    let mut out = Vec::new();
+    let mut changing = 0;
+    for q in fresh.into_iter().chain(seen) {
+        if out.len() == ASKED {
+            break;
+        }
+        if changes(q) {
+            if changing == MAX_CHANGING {
+                continue;
+            }
+            changing += 1;
+        }
+        out.push(q);
+    }
     shuffle(&mut out, rng);
     out
 }

@@ -257,17 +257,22 @@ the next world. Retries are unlimited.
 - **Questions are read-the-code, not recall.** Each one shows a short block
   program, often with a small map, and asks what happens: where the miner ends
   up, how many times something runs, which program reaches the portal, or which
-  program does the same thing. Questions live in `questions.rs`, 15 per world.
+  program does the same thing. Questions live in `questions.rs`, 15 to 17 per
+  world. Later worlds also include questions on earlier ideas (loops, functions),
+  so those keep getting practice.
 - **Every answer is proven.** Each question names how to check it (`Proof`),
   and `every_answer_is_right` runs the programs in the real VM. It fails if the
   marked answer is wrong, or if a wrong choice is also right. Questions on maps
   with random squares are checked in 300 versions of the map.
 - **Retries get new questions.** An attempt takes every question that wasn't in
-  the previous attempt first, then fills up from the rest. With 15 per bank, each
-  retry has at least 5 new questions. The last attempt's ids are saved, so this
+  the previous attempt first, then fills up from the rest, so each retry has
+  at least 3 new questions (tests check this for every bank). The last attempt's ids are saved, so this
   holds across restarts too. Choices are shuffled every time, so Bit's
   explanations never point at a choice by position ("the middle program"):
   they name it by what it does ("the program that checks for lava").
+- **At most 2 "works every time" questions per attempt.** Questions on a map
+  that changes between versions make kids picture every version at once. They
+  are the hardest kind to follow, so `pick` caps them at `MAX_CHANGING`.
 - **Unlocking:** world *w* opens when Check *w*−1 is passed. Saves from before
   World Checks keep every world they had already reached, and can still take
   the checks they skipped. The last world (Nether Fortress) needs **all** checks
@@ -300,7 +305,12 @@ These come from bugs found while building the levels.
    the miner reaches the portal, `repeat 20 { forward }` wins any straight
    hallway that ends at the portal. To force `while`, put a *turn* after the
    variable-length part (as "How Far?" does).
-7. **Level names are save keys.** Keep them unique and never rename one that
+7. **Bit talks in blocks.** Intros, hints and lessons use block names
+   (`IF path ahead, FORWARD. ELSE, TURN RIGHT.`), never typed-code symbols
+   like `{ }`. Kids only see code in "Show Rust code". Explain any programming
+   word (bug, algorithm, decomposition) in plain words the first time it
+   appears. A test rejects `{`, `}` and `;` in level text.
+8. **Level names are save keys.** Keep them unique and never rename one that
    kids may already have finished. If you must rename, update
    `LEGACY_ORDER`.
 
