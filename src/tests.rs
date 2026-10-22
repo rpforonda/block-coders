@@ -784,6 +784,65 @@ mod world_checks {
         assert_eq!(back.check_last[2], vec!["w3-02".to_string()], "only real questions from that world");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    fn json(s: &str) -> String {
+        let mut out = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+
+    fn json_list(items: impl IntoIterator<Item = String>) -> String {
+        format!("[{}]", items.into_iter().collect::<Vec<_>>().join(","))
+    }
+
+    /// Programs as the Rust code kids see in "Show Rust code", which reads
+    /// better than the save format.
+    fn rust(q: &Question, src: &str) -> String {
+        parse(q, src).to_rust().join("\n")
+    }
+
+    /// Writes every question to `target/question-audit/questions.json` for
+    /// `tools/audit_questions.py`. Skipped by default; run it with
+    /// `cargo test export_questions -- --ignored`.
+    #[test]
+    #[ignore]
+    fn export_questions() {
+        let mut out = Vec::new();
+        for (c, bank) in BANKS.iter().enumerate() {
+            for q in bank.iter() {
+                let (kind, choices) = match q.choices {
+                    Choices::Text(t) => ("text", t.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+                    Choices::Programs(p) => ("programs", p.iter().map(|s| rust(q, s)).collect()),
+                    Choices::Spots(s) => ("spots", s.iter().map(|(x, y)| format!("the square at column {x}, row {y}")).collect()),
+                };
+                let program = if q.program.is_empty() { "null".to_string() } else { json(&rust(q, q.program)) };
+                out.push(format!(
+                    "{{\"id\":{},\"world\":{},\"prompt\":{},\"program\":{},\"map\":{},\"blocks\":{},\"kind\":{},\"choices\":{},\"explain\":{}}}",
+                    json(q.id),
+                    c + 1,
+                    json(q.prompt),
+                    program,
+                    json_list(q.map.iter().map(|r| json(r))),
+                    q.blocks,
+                    json(kind),
+                    json_list(choices.iter().map(|s| json(s))),
+                    json(q.explain),
+                ));
+            }
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/question-audit");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("questions.json"), json_list(out) + "\n").unwrap();
+    }
 }
 
 mod smart_hints {
