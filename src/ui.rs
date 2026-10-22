@@ -276,5 +276,15 @@ pub fn block_icon(kind: crate::program::Kind, x: f32, y: f32, s: f32, art: &crat
         Call => {
             text("f()", x - 2.0, y + s * 0.25, s * 0.62, c);
         }
+        // A little box: a variable is a box that holds a number.
+        Set | Add => {
+            draw_rectangle_lines(x + 2.0, y + 4.0, s - 4.0, s - 6.0, 2.0, c);
+            let sign = if kind == Set { "=" } else { "+" };
+            text(sign, m.x - s * 0.18, y + s * 0.12, s * 0.8, c);
+        }
+        RepeatCount => {
+            draw_arc(m.x, m.y, 24, s * 0.33, 30.0, 3.0, 300.0, c);
+            text("n", m.x - s * 0.13, m.y - s * 0.3, s * 0.5, c);
+        }
     }
 }

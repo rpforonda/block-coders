@@ -57,6 +57,7 @@ pub fn kind_color(k: Kind) -> Color {
         Kind::Repeat | Kind::While => rgb8(225, 170, 20),
         Kind::If | Kind::IfElse => rgb8(140, 80, 210),
         Kind::Call => rgb8(215, 65, 140),
+        Kind::Set | Kind::Add | Kind::RepeatCount => rgb8(30, 160, 150),
     }
 }
 
@@ -473,23 +474,28 @@ impl Editor {
             let label_x = x + 34.0;
             let ty = sy + 9.0;
             let say = |s: &str, x: f32| if dark_text { text(s, x, ty, 18.0, tc) } else { shadow_text(s, x, ty, 18.0, tc) };
-            match node.kind {
-                Kind::Repeat => {
-                    say("repeat", label_x);
-                    let mx = label_x + text_width("repeat", 18.0) + 8.0;
-                    let minus = Rect::new(mx, sy + 7.0, 20.0, 20.0);
-                    let num = format!("{}", node.count);
-                    let nx = mx + 26.0;
-                    let plus = Rect::new(nx + text_width("00", 20.0) + 6.0, sy + 7.0, 20.0, 20.0);
-                    if ui.button(minus, "-", rgb8(250, 240, 200), 20.0) {
-                        edit = Some(Edit::Count(r.list.clone(), r.index, -1));
-                    }
-                    text(&num, nx + (text_width("00", 20.0) - text_width(&num, 20.0)) / 2.0, sy + 8.0, 20.0, tc);
-                    if ui.button(plus, "+", rgb8(250, 240, 200), 20.0) {
-                        edit = Some(Edit::Count(r.list.clone(), r.index, 1));
-                    }
-                    say("times", plus.x + 26.0);
+            // Words, a number with - and + buttons, then more words.
+            let mut number = |before: &str, after: &str| {
+                say(before, label_x);
+                let mx = label_x + text_width(before, 18.0) + 8.0;
+                let minus = Rect::new(mx, sy + 7.0, 20.0, 20.0);
+                let num = format!("{}", node.count);
+                let nx = mx + 26.0;
+                let plus = Rect::new(nx + text_width("00", 20.0) + 6.0, sy + 7.0, 20.0, 20.0);
+                if ui.button(minus, "-", rgb8(250, 240, 200), 20.0) {
+                    edit = Some(Edit::Count(r.list.clone(), r.index, -1));
                 }
+                text(&num, nx + (text_width("00", 20.0) - text_width(&num, 20.0)) / 2.0, sy + 8.0, 20.0, tc);
+                if ui.button(plus, "+", rgb8(250, 240, 200), 20.0) {
+                    edit = Some(Edit::Count(r.list.clone(), r.index, 1));
+                }
+                say(after, plus.x + 26.0);
+            };
+            match node.kind {
+                Kind::Repeat => number("repeat", "times"),
+                Kind::Set => number("set count to", ""),
+                Kind::Add => number("add", "to count"),
+                Kind::RepeatCount => say("repeat count times", label_x),
                 Kind::If | Kind::IfElse | Kind::While => {
                     let word = if node.kind == Kind::While { "while" } else { "if" };
                     say(word, label_x);
@@ -625,8 +631,9 @@ impl Editor {
                 changed = true;
             }
             Some(Edit::Count(list, i, d)) => {
-                if let Some(n) = list_mut(p, &list).and_then(|l| l.get_mut(i)) {
-                    n.count = (n.count as i32 + d).clamp(1, 20) as u32;
+                let node = list_mut(p, &list).and_then(|l| l.get_mut(i));
+                if let Some((n, (lo, hi))) = node.and_then(|n| n.kind.number_range().map(|r| (n, r))) {
+                    n.count = (n.count as i32 + d).clamp(lo as i32, hi as i32) as u32;
                 }
                 changed = true;
             }

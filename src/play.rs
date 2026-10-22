@@ -63,6 +63,8 @@ pub enum Nav {
 
 #[derive(PartialEq, Clone, Copy)]
 enum AnimKind {
+    /// A block changed `count`: nothing moves, the count box lights up.
+    Var,
     Move,
     Turn,
     Mine,
@@ -144,6 +146,8 @@ pub struct Play {
     /// (serialized program, seed), and how many have been shown.
     hints: Option<(String, u64, Vec<Hint>)>,
     hints_shown: usize,
+    /// Lights up the count box when a block changes it (1 = just changed).
+    count_flash: f32,
     /// The guided tour, while it runs.
     tour: Option<Tour>,
     /// A click the tour kept from reaching the screen, for its own buttons.
@@ -215,6 +219,7 @@ impl Play {
             followed: None,
             hints: None,
             hints_shown: 0,
+            count_flash: 0.0,
             tour,
             tour_click: false,
         };
@@ -406,6 +411,24 @@ impl Play {
                 }
                 let _ = failed;
             }
+            Step::Var(id) => {
+                self.running_id = Some(id);
+                self.count_flash = 1.0;
+                sfx.play(Sfx::Click);
+                let w = &self.world;
+                self.anim = Some(Anim {
+                    kind: AnimKind::Var,
+                    t: 0.0,
+                    dur: dur * 0.6,
+                    from: w.pos,
+                    to: w.pos,
+                    from_dir: w.dir,
+                    target: w.front(),
+                    old_tile: w.tile(w.front()),
+                    fired: false,
+                    gem: None,
+                });
+            }
             Step::Done => {
                 self.state = RunState::Done;
                 self.running_id = None;
@@ -468,6 +491,7 @@ impl Play {
 
     fn update(&mut self, dt: f32, sfx: &Sounds, progress: &mut Progress) {
         self.shake = (self.shake - dt).max(0.0);
+        self.count_flash = (self.count_flash - dt * 1.5).max(0.0);
         let mut fire = None;
         if let Some(a) = self.anim.as_mut() {
             a.t += dt;
@@ -957,6 +981,17 @@ impl Play {
             draw_tex(&art.emerald, x, y + 6.0, 26.0, 26.0, WHITE);
             shadow_text(&format!("{} / {}", w.emeralds, w.emeralds_total), x + 32.0, y + 10.0, 20.0, rgb8(150, 255, 170));
             x += 110.0;
+        }
+        // The `count` variable, drawn as a labelled box holding its number.
+        if self.level.palette.iter().any(|k| k.uses_count()) {
+            let value = self.vm.as_ref().map_or(0, |vm| vm.count);
+            let glow = self.count_flash;
+            shadow_text("count", x, y + 10.0, 20.0, rgb8(140, 235, 220));
+            let b = Rect::new(x + 66.0, y + 4.0, 46.0, 30.0);
+            draw_rectangle(b.x, b.y, b.w, b.h, Color::new(0.12 + glow * 0.5, 0.63, 0.59, 1.0));
+            draw_rectangle_lines(b.x, b.y, b.w, b.h, 2.0 + glow * 2.0, WHITE);
+            text_centered(&value.to_string(), b, 22.0, WHITE, true);
+            x += 130.0;
         }
         if let Some(vm) = &self.vm {
             shadow_text(&format!("Steps: {}", vm.actions), x, y + 10.0, 20.0, rgb8(220, 220, 220));

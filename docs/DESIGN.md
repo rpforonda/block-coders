@@ -71,7 +71,7 @@ flowchart TD
     editor["editor.rs<br/>block editor"]
     program["program.rs<br/>blocks, compiler, VM,<br/>Rust codegen, save format"]
     world["world.rs<br/>tiles, rules, conditions,<br/>random map generation"]
-    levels["levels.rs<br/>60 levels as data"]
+    levels["levels.rs<br/>66 levels as data"]
     save["save.rs<br/>players + progress files"]
     art["art.rs / sound.rs<br/>procedural pixel art + sfx"]
     ui["ui.rs<br/>buttons, text, panels"]
@@ -157,9 +157,17 @@ blocks (tree)  ──compile──▶  bytecode  ──Vm::next──▶  one ac
 
 A program is two lists of `Node`s: `main` and `func` (one user-defined
 function). Each node has a `kind` (forward, turn left/right, mine, place, call,
-repeat, if, if/else, while), and also a `count` for repeat, a `cond` for
-if/while, a `body`, an `els` (else part), and a unique `id`. The id is how the
-running block gets highlighted.
+repeat, if, if/else, while, set count, add to count, repeat count), and also a
+`count` (the number on a repeat, set or add block), a `cond` for if/while, a
+`body`, an `els` (else part), and a unique `id`. The id is how the running
+block gets highlighted.
+
+**The `count` variable.** There is exactly one variable, and its name is fixed,
+so kids never type a name and nothing they make can name anything else. It
+holds a whole number from 0 to `MAX_VALUE` (99). SET puts a number in it, ADD
+adds to it (stopping at 99, so it can't overflow), and REPEAT COUNT TIMES reads
+it. Every run starts it at 0. MAIN and the function share it, which the Rust
+view shows by passing `&mut count` to the function.
 
 ### Compiler and VM
 
@@ -169,6 +177,8 @@ running block gets highlighted.
 |---|---|
 | `Act(action, id)` | Do an action (the VM pauses here and hands it to the game) |
 | `Push(n)` / `Loop(top)` | Repeat: push a counter; at the end, count down and jump back |
+| `PushCount(end, id)` | Repeat count times: push `count` as the counter, or skip the loop if it's 0 |
+| `Set(n, id)` / `Add(n, id)` | Change `count`. The VM pauses here too (`Step::Var`) so the block lights up and the count box shows the new number |
 | `JumpIfNot(cond, target, id)` | if / while test |
 | `Jump(target)` | else-skip / loop back |
 | `Call(id)` / `Ret` | Call the function / return |
@@ -206,8 +216,9 @@ of each level's `solution` field:
 C C F / F L M R            main: call, call, forward   function: forward, left, mine, right
 ```
 
-The tokens are `F L R M P C`, and `[R<n>`, `[I<c>`, `[E<c>`, `[W<c>` open a
-repeat, if, if/else or while, where `<c>` is an index into `ALL_CONDS`. `|`
+The tokens are `F L R M P C`, `S<n>` (set count to n) and `A<n>` (add n to
+count), and `[R<n>`, `[I<c>`, `[E<c>`, `[W<c>`, `[V0` open a repeat, if,
+if/else, while or repeat-count-times, where `<c>` is an index into `ALL_CONDS`. `|`
 separates if/else branches, `]` closes a block, and `/` separates main from
 the function.
 
@@ -229,11 +240,11 @@ so a kid can debug against a world that stays put.
 
 ## Curriculum and level design
 
-Levels are data (`levels.rs`). They're grouped into six chapters. Each chapter
+Levels are data (`levels.rs`). They're grouped into seven chapters. Each chapter
 starts with an intro level (enforced by a test) and ramps up:
 
 ```
-Sequences (9) → Loops (11) → Functions (8) → If/Else (14) 🎲 → While & algorithms (12) 🎲 → Master (6) 🎲
+Sequences (9) → Loops (11) → Functions (8) → If/Else (14) 🎲 → While & algorithms (12) 🎲 → Variables (6) 🎲 → Master (6) 🎲
 ```
 
 Inside a chapter, difficulty grows by: more steps → mixing two concepts →
@@ -245,6 +256,13 @@ features at once. Examples:
 - **If/Else:** one maybe-stone → two → a whole corridor → lava → stone *or*
   water (two `if`s) → stone *or* lava (`if/else`) → forks (path sensing) →
   diamonds on both sides → `if` inside functions.
+- **Variables:** put a number in the box and repeat that many times → use it
+  twice → ADD makes stairs that grow 1, 2, 3, 4 → a growing spiral of emeralds
+  → count steps with WHILE and use the number later (Echo Hall) → count stones
+  while mining. Each level is built so the variable is needed: the fixed ones
+  leave out the numbered REPEAT and set a block limit, and in the changing ones
+  the portal is somewhere no sensor can find, so only counting (or a sweep too
+  long for the block limit) gets there. Tests check both.
 - **While:** random-length wall → random-length tunnels and lava → roads that
   only turn right → spirals → roads that turn both ways → mazes → mazes with
   hazards.
@@ -277,8 +295,10 @@ the next world. Retries are unlimited.
 - **Unlocking:** world *w* opens when Check *w*−1 is passed. Saves from before
   World Checks keep every world they had already reached, and can still take
   the checks they skipped. The last world (Nether Fortress) needs **all** checks
-  passed, even for those older saves. A check opens once the world's last level
-  is beaten. Parent mode (Ctrl+U) opens everything.
+  passed, even for those older saves. One exception: the Counting Caverns world
+  (and its check) came later, so a player who had already reached the Nether
+  Fortress and passed the five checks there were then keeps it. A check opens
+  once the world's last level is beaten. Parent mode (Ctrl+U) opens everything.
 - `check.rs` has the screen, plus read-only drawing of programs and maps. Map
   squares that change between versions show their symbol with a legend
   ("? = stone or empty").
@@ -495,7 +515,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `dynamic_levels_cannot_be_hardcoded` | For each dynamic level, replaying the exact moves that won one world fails in some other world |
 | `shortcuts_fail_somewhere` | Specific tempting shortcuts fail (e.g. "mine everything", road-following on a maze) |
 | `solutions_only_use_available_conditions` | Solutions only use conditions the kid can pick in that level |
-| `level_list_is_sane` | 60 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
+| `level_list_is_sane` | 66 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
@@ -551,6 +571,7 @@ screenshots don't show real players' names.
 | Procedural assets | Image/sound files | A single self-contained binary, nothing to lose or load, and the art is itself code kids can explore. |
 | Bytecode VM that pauses at actions | Walking the tree with recursion | Stepping, highlighting, animation and instant simulation all share one path. Infinite loops are easy to detect. |
 | One function (no parameters) | Several named functions | Enough to teach reuse at this age. More would need naming UI. |
+| One variable with a fixed name, whole numbers 0–99 | Named variables, text, negative numbers | One box is enough to teach "store, change, use". No typing means no naming UI and nothing a child types ever becomes code. The bounds mean no overflow, and REPEAT COUNT stays small. |
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
@@ -566,7 +587,7 @@ screenshots don't show real players' names.
   keyboard, and the 1280×800 layout is small on phones.
 - **Accessibility.** No screen reader support. Colors are bold and paired with
   icons and text labels, but they haven't been checked for color blindness.
-- **One function, no parameters, no variables.** Possible next concepts:
+- **One function, no parameters, one variable.** Possible next concepts:
   counters ("repeat until you have 3 blocks"), parameters ("dig(n)"), or a
   second function.
 - **Level authoring needs Rust.** Levels are compiled in. Loading levels from

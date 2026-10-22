@@ -65,6 +65,8 @@ pub enum Proof {
     SameResult,
     /// The number of blocks left in the backpack at the end.
     Backpack,
+    /// The number in the `count` variable at the end.
+    Variable,
 }
 
 /// How a program run ends.
@@ -892,4 +894,145 @@ const W5: &[Question] = &[
 /// One bank per World Check. Check `c` comes after world `c` (0-based), so
 /// there is one fewer bank than there are worlds: the last world has no
 /// world after it to unlock.
-pub const BANKS: [&[Question]; 5] = [W1, W2, W3, W4, W5];
+// ============================ World 6: Variables ============================
+const W6: &[Question] = &[
+    Question {
+        id: "w6-01",
+        prompt: "What number is in count at the end?",
+        program: "S3 A1 A1",
+        choices: Choices::Text(&["5", "3", "2"]),
+        explain: "SET COUNT TO 3 puts 3 in the box. Each ADD 1 makes it one bigger: 4, then 5.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-02",
+        prompt: "How many steps forward does the miner take?",
+        program: "S4 [V0 F ]",
+        choices: Choices::Text(&["4", "1", "0"]),
+        explain: "The box holds 4, so REPEAT COUNT TIMES goes round 4 times. One FORWARD each time is 4 steps.",
+        proof: Proof::Count(&[Forward]),
+        ..Q
+    },
+    Question {
+        id: "w6-03",
+        prompt: "What number is in count at the end?",
+        program: "[R3 A2 ]",
+        choices: Choices::Text(&["6", "3", "2"]),
+        explain: "The loop goes round 3 times, and each time it adds 2: 2, then 4, then 6.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-04",
+        prompt: "What number is in count at the end?",
+        program: "S5 S2",
+        choices: Choices::Text(&["2", "7", "5"]),
+        explain: "SET COUNT TO throws away the old number and puts in the new one. The last SET puts in 2.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-05",
+        prompt: "How many steps forward does the miner take?",
+        program: "A2 [V0 F ] A1 [V0 F ]",
+        choices: Choices::Text(&["5", "3", "2"]),
+        explain: "The box holds 2, so the miner walks 2. Then ADD 1 makes it 3, so the miner walks 3 more. 2 + 3 = 5.",
+        proof: Proof::Count(&[Forward]),
+        ..Q
+    },
+    Question {
+        id: "w6-06",
+        prompt: "How many steps forward does the miner take?",
+        program: "[V0 F ]",
+        choices: Choices::Text(&["0", "1", "3"]),
+        explain: "Every run, count starts at 0. So REPEAT COUNT TIMES goes round 0 times, and the miner doesn't move.",
+        proof: Proof::Count(&[Forward]),
+        ..Q
+    },
+    Question {
+        id: "w6-07",
+        prompt: "Where does the miner end up?",
+        program: "S2 [V0 F ] R [V0 F ]",
+        map: &["TTTTTTT", "T>....T", "T.....T", "T.....T", "T.....T", "TTTTTTT"],
+        choices: Choices::Spots(&[(3, 3), (5, 1), (3, 1)]),
+        explain: "The box holds 2. The miner walks 2 squares right, turns to face down, and walks 2 more.",
+        ..Q
+    },
+    Question {
+        id: "w6-08",
+        prompt: "What number is in count at the end?",
+        program: "[W0 F A1 ]",
+        map: &["TTTTTTT", "T>....T", "TTTTTTT"],
+        choices: Choices::Text(&["4", "5", "0"]),
+        explain: "Each time round, the miner takes a step and adds 1. It takes 4 steps before the trees, so count is 4.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-09",
+        prompt: "Which program reaches the portal?",
+        map: &["BBBBBBBBB", "BBBBBBBBB", "BBBB...PB", "BB...BBBB", "B>.BBBBBB", "BBBBBBBBB"],
+        choices: Choices::Programs(&["[R3 A1 [V0 F ] L F R ]", "[R3 [V0 F ] L F R ]", "[R3 A1 [V0 F ] R F L ]"]),
+        explain: "ADD 1 TO COUNT makes each step one square longer: 1, 2, 3. Without the ADD, count stays 0 and the miner never walks along a step. Turning right faces the wall.",
+        proof: Proof::OnlyWinner,
+        ..Q
+    },
+    Question {
+        id: "w6-10",
+        prompt: "How many steps forward does the miner take?",
+        program: "[R3 A1 [V0 F ] ]",
+        choices: Choices::Text(&["6", "3", "9"]),
+        explain: "count grows 1, 2, 3, and each time the miner walks that many squares: 1 + 2 + 3 = 6.",
+        proof: Proof::Count(&[Forward]),
+        ..Q
+    },
+    Question {
+        id: "w6-11",
+        prompt: "Which program does exactly the same as this one?",
+        program: "F F F",
+        choices: Choices::Programs(&["S3 [V0 F ]", "S3 F", "[V0 F ] S3"]),
+        explain: "SET COUNT TO 3 must come BEFORE the loop that reads it. Setting it after the loop is too late, and SET on its own doesn't move the miner.",
+        proof: Proof::SameResult,
+        ..Q
+    },
+    Question {
+        id: "w6-12",
+        prompt: "What number is in count at the end?",
+        program: "C C / A2",
+        choices: Choices::Text(&["4", "2", "0"]),
+        explain: "Each CALL runs the function, and the function adds 2. Two calls: 2 + 2 = 4.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-13",
+        prompt: "What number is in count at the end?",
+        program: "[R4 [I3 M A1 ] F ]",
+        map: &["TTTTTTT", "T>#.#.T", "TTTTTTT"],
+        choices: Choices::Text(&["2", "4", "0"]),
+        explain: "ADD 1 is inside the IF, so it only runs when there's stone ahead. There are 2 stones, so count is 2.",
+        proof: Proof::Variable,
+        ..Q
+    },
+    Question {
+        id: "w6-14",
+        prompt: "Where does the miner end up?",
+        program: "[R3 A1 [V0 F ] R ]",
+        map: &["TTTTTTTT", "T......T", "T......T", "T..^...T", "T......T", "T......T", "T......T", "TTTTTTTT"],
+        choices: Choices::Spots(&[(5, 5), (5, 2), (6, 6)]),
+        explain: "count grows 1, 2, 3. The miner walks up 1, turns, walks 2 to the right, turns, and walks 3 down.",
+        ..Q
+    },
+    Question {
+        id: "w6-15",
+        prompt: "The portal is 3 squares away. Which program reaches it?",
+        map: &["TTTTTT", "T>..PT", "TTTTTT"],
+        choices: Choices::Programs(&["S3 [V0 F ]", "[V0 F ] S3", "S1 [V0 F ]"]),
+        explain: "The box must hold 3 BEFORE the loop reads it. A loop that runs before the SET sees 0, and SET COUNT TO 1 only walks 1 square.",
+        proof: Proof::OnlyWinner,
+        ..Q
+    },
+];
+
+pub const BANKS: [&[Question]; 6] = [W1, W2, W3, W4, W5, W6];

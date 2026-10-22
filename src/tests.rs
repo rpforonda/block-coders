@@ -9,7 +9,7 @@ fn level(name: &str) -> &'static crate::levels::Level {
 
 #[test]
 fn level_list_is_sane() {
-    assert_eq!(LEVELS.len(), 60);
+    assert_eq!(LEVELS.len(), 66);
     let mut names: Vec<&str> = LEVELS.iter().map(|l| l.name).collect();
     assert!(names.iter().all(|n| !n.contains(';') && !n.is_empty()));
     names.sort();
@@ -79,6 +79,7 @@ fn dynamic_levels_cannot_be_hardcoded() {
                         break;
                     }
                 }
+                Step::Var(_) => {}
                 _ => panic!("{}: solution didn't win seed 7", l.name),
             }
         }
@@ -156,6 +157,9 @@ fn shortcuts_fail_somewhere() {
         ("The Maze", "[W7 [E0 F | [E1 L | R ] ] ]"),    // road-following can't solve the maze
         ("Bigger Maze", "[W7 [E0 F | [E1 L | R ] ] ]"),
         ("Lava Bridges", "C C R C / [W5 P F ] [R3 F ]"), // fixed walking distance
+        ("Echo Hall", "[W0 F ] R [W0 F ] L [W0 F ]"),       // walks to the walls instead of counting
+        ("Echo Hall", "[W0 F ] R [R3 F ] L [R6 F ] F"),     // a fixed distance
+        ("Stone Counter", "[W3 M F ] R [W0 F ] L [W0 F ]"),
     ];
     for (name, src) in cases {
         let l = level(name);
@@ -643,6 +647,13 @@ mod world_checks {
                     assert_eq!(t[0], n.to_string(), "{}: the count is {n}", q.id);
                     assert!(t[1..].iter().all(|x| *x != n.to_string()), "{}: a wrong choice is also {n}", q.id);
                 }
+                Proof::Variable => {
+                    let r = the_program(q);
+                    assert!(matches!(r.end, End::Wins | End::Unfinished), "{}: program fails with {:?}", q.id, r.end);
+                    let t = texts(q);
+                    assert_eq!(t[0], r.count.to_string(), "{}: count ends at {}", q.id, r.count);
+                    assert!(t[1..].iter().all(|x| *x != r.count.to_string()), "{}: a wrong choice is also {}", q.id, r.count);
+                }
                 Proof::Backpack => {
                     let r = the_program(q);
                     assert_eq!(texts(q)[0], r.world.blocks.to_string(), "{}: backpack ends with {}", q.id, r.world.blocks);
@@ -746,12 +757,27 @@ mod world_checks {
         done.stars.iter_mut().for_each(|s| *s = 3);
         assert!(done.unlocked(last_of(master - 1)), "earlier worlds stay open");
         assert!(!done.unlocked(first_of(master)));
-        for c in 0..CHECKS - 1 {
+        for c in 1..CHECKS {
             done.checks[c] = true;
         }
         assert!(!done.unlocked(first_of(master)), "one check still missing");
-        done.checks[CHECKS - 1] = true;
+        done.checks[0] = true;
         assert!(done.unlocked(first_of(master)) && done.unlocked(last_of(master)));
+
+        // Players already in the Nether Fortress before the Counting Caverns
+        // world (and its check) were added keep it...
+        done.checks[CHECKS - 1] = false;
+        assert!(done.unlocked(first_of(master)), "an old save that had reached the last world keeps it");
+        // ...but a player who hasn't got there yet needs the new check too.
+        let mut new = Progress::new(None);
+        for i in 0..first_of(master) {
+            new.stars[i] = 3;
+        }
+        new.checks.iter_mut().for_each(|c| *c = true);
+        new.checks[CHECKS - 1] = false;
+        assert!(!new.unlocked(first_of(master)));
+        new.checks[CHECKS - 1] = true;
+        assert!(new.unlocked(first_of(master)));
 
         // Parent mode (Ctrl+U) opens everything.
         let mut parent = Progress::new(None);
@@ -1137,6 +1163,128 @@ mod guided_tour {
             assert!(!s.text.to_lowercase().contains("clicking"));
             // Long enough to fit Bit's tallest bubble with room to spare.
             assert!(t.text().len() <= 300, "step {step} is too long for its bubble");
+        }
+    }
+}
+
+/// The `count` variable: saves are untrusted, numbers stay in bounds, and
+/// endless loops are caught. Nothing here can reach outside the game: the VM
+/// only ever hands back one of five miner actions.
+mod variables {
+    use super::level;
+    use crate::program::{simulate, Kind, Program, Step, Vm, MAX_VALUE};
+    use crate::world::{Rng, World};
+
+    fn run_count(src: &str) -> (u32, Option<String>) {
+        let p = Program::deserialize(src).unwrap();
+        let w = World::from_level(level("The Number Box"), 0);
+        let mut vm = Vm::new(&p);
+        let mut w2 = w.clone();
+        loop {
+            match vm.next(&w2) {
+                Step::Act(a, _) => {
+                    if !matches!(w2.apply(a), crate::world::Outcome::Ok) {
+                        return (vm.count, None);
+                    }
+                }
+                Step::Var(_) => {}
+                Step::Done => return (vm.count, None),
+                Step::Error(m, _) => return (vm.count, Some(m)),
+            }
+        }
+    }
+
+    #[test]
+    fn numbers_outside_the_editor_s_range_are_rejected() {
+        for bad in ["S21", "S-1", "S", "A0", "A10", "A99999999999", "S1x", "[V1 F ]", "[V F ]", "[V0 F", "A1 ]"] {
+            assert!(Program::deserialize(bad).is_none(), "{bad} should not load");
+        }
+        for good in ["S0", "S20", "A1", "A9", "[V0 ]", "S3 [V0 [V0 F ] ]"] {
+            assert!(Program::deserialize(good).is_some(), "{good} should load");
+        }
+    }
+
+    #[test]
+    fn count_never_goes_past_its_limit() {
+        // 9 x 99 would be 891; the box stops at MAX_VALUE.
+        let (count, err) = run_count("[R99 A9 ]");
+        assert_eq!(count, MAX_VALUE);
+        assert!(err.is_none());
+        assert_eq!(run_count("S20 S0").0, 0);
+    }
+
+    #[test]
+    fn loops_that_only_change_count_are_caught() {
+        let (_, err) = run_count("[W0 A1 ]");
+        assert!(err.is_some_and(|m| m.contains("count")), "an endless ADD loop must stop with a message");
+        // A big REPEAT COUNT still stops at the action limit.
+        let p = Program::deserialize("S20 [V0 [V0 [V0 L ] ] ]").unwrap();
+        assert!(simulate(&p, World::from_level(level("The Number Box"), 0)).is_err());
+    }
+
+    #[test]
+    fn repeat_count_runs_zero_times_when_count_is_zero() {
+        let p = Program::deserialize("[V0 F ]").unwrap();
+        let mut vm = Vm::new(&p);
+        let w = World::from_level(level("The Number Box"), 0);
+        assert!(matches!(vm.next(&w), Step::Done), "count starts at 0, so nothing runs");
+    }
+
+    /// Random junk and random mutations of real programs never panic the
+    /// loader, and whatever loads runs to an end within the limits.
+    #[test]
+    fn random_saves_never_crash() {
+        let toks = ["F", "L", "R", "M", "P", "C", "S", "S3", "S20", "S21", "A1", "A9", "A0", "[V0", "[V1", "[R3", "[R0", "[I3", "[E1", "[W0", "[W9", "|", "]", "/", "é", "[V0é", "S٣"];
+        let mut rng = Rng::new(42);
+        let world = World::from_level(level("Echo Hall"), 1);
+        for _ in 0..3000 {
+            let n = rng.below(14);
+            let s: Vec<&str> = (0..n).map(|_| toks[rng.below(toks.len())]).collect();
+            let src = s.join(" ");
+            if let Some(p) = Program::deserialize(&src) {
+                let _ = simulate(&p, world.clone());
+                // Saving and loading again gives the same program.
+                assert_eq!(Program::deserialize(&p.serialize()).map(|q| q.serialize()), Some(p.serialize()), "{src}");
+            }
+        }
+    }
+
+    #[test]
+    fn rust_view_declares_and_borrows_count() {
+        let p = Program::deserialize("S2 C [V0 F ] / A1").unwrap();
+        let code = p.to_rust().join("\n");
+        assert!(code.contains("let mut count = 0;"), "{code}");
+        assert!(code.contains("my_function(&mut count);"), "{code}");
+        assert!(code.contains("fn my_function(count: &mut u32) {"), "{code}");
+        assert!(code.contains("*count += 1;"), "{code}");
+        assert!(code.contains("for _ in 0..count {"), "{code}");
+        // Programs without variables look exactly as before.
+        let plain = Program::deserialize("F C / L").unwrap().to_rust().join("\n");
+        assert!(!plain.contains("count") && plain.contains("fn my_function() {"), "{plain}");
+    }
+
+    /// Each level in the variables world needs the variable: the plain ways
+    /// fail somewhere or don't fit in the block limit.
+    #[test]
+    fn variables_levels_need_the_variable() {
+        let too_long = [
+            ("The Number Box", "F F F F F F F"),
+            ("Two Long Halls", "F F F F F R F F F F F"),
+            ("Growing Stairs", "F L F R F F L F R F F F L F R F F F F"),
+            // A lawnmower sweep finds the portal without counting, but needs more blocks.
+            ("Echo Hall", "[R3 [W0 F ] R F R [W0 F ] L F L ]"),
+            ("Stone Counter", "R [R3 [W0 F ] L F L [W0 F ] R F R ]"),
+        ];
+        for (name, src) in too_long {
+            let l = level(name);
+            let p = Program::deserialize(src).unwrap();
+            assert!(p.block_count() > l.max_blocks.unwrap(), "{name}: {src} fits in the block limit");
+        }
+        for l in crate::levels::LEVELS.iter().filter(|l| l.chapter == 5) {
+            let p = Program::deserialize(l.solution).unwrap();
+            let mut used = Vec::new();
+            crate::program::kinds_used(&p.main, &mut used);
+            assert!(used.contains(&Kind::RepeatCount), "{}: the solution should use the variable", l.name);
         }
     }
 }

@@ -99,6 +99,8 @@ pub struct Run {
     pub world: World,
     pub end: End,
     pub actions: Vec<Action>,
+    /// What the `count` variable held at the end.
+    pub count: u32,
 }
 
 /// Runs a program to the end, like pressing RUN without the animation.
@@ -129,11 +131,12 @@ pub fn run(p: &Program, mut world: World) -> Run {
                     }
                 }
             }
+            Step::Var(_) => {}
             Step::Done => break End::Unfinished,
             Step::Error(..) => break End::Stuck,
         }
     };
-    Run { world, end, actions }
+    Run { world, end, actions, count: vm.count }
 }
 
 // ---------------------------------------------------------------------------
@@ -590,12 +593,7 @@ pub fn draw_program(p: &Program, area: Rect, art: &Art) {
                 bevel(r, color);
                 let icon = (row - 12.0).max(10.0);
                 crate::ui::block_icon(n.kind, r.x + 4.0, r.y + (r.h - icon) / 2.0, icon, art);
-                let label = match n.kind {
-                    Kind::Repeat => format!("repeat {} times", n.count),
-                    Kind::If | Kind::IfElse => format!("if {}", n.cond.label()),
-                    Kind::While => format!("while {}", n.cond.label()),
-                    k => k.palette_label().to_string(),
-                };
+                let label = n.label();
                 let dark = luminance(color) > 0.8;
                 let ty = r.y + (r.h - size) / 2.0;
                 if dark {

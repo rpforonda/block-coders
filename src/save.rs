@@ -24,6 +24,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use storage::read;
 
 pub const MAX_USERS: usize = 6;
+/// How many World Checks there were before the Counting Caverns world.
+const CHECKS_BEFORE_VARIABLES: usize = 5;
 pub const MAX_NAME: usize = 12;
 /// Saves larger than this are ignored. Real ones are a few KB.
 pub const MAX_SAVE_BYTES: usize = 256 * 1024;
@@ -437,12 +439,14 @@ impl Progress {
 
     /// Is world `c` open? Each world needs the World Check before it, except
     /// that saves from before World Checks keep the worlds they'd already
-    /// reached. The last world always needs every check passed.
+    /// reached. The last world needs every check passed, except that players
+    /// who were already in it before the Counting Caverns world was added
+    /// (and had passed every check there was then) keep it.
     pub fn world_open(&self, c: usize) -> bool {
         if self.unlock_all || c == 0 {
             true
         } else if c == CHAPTERS.len() - 1 {
-            self.checks.iter().all(|&p| p)
+            self.checks.iter().all(|&p| p) || (self.reached_world(c) && self.checks[..CHECKS_BEFORE_VARIABLES].iter().all(|&p| p))
         } else {
             self.checks[c - 1] || self.reached_world(c)
         }

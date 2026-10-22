@@ -159,7 +159,7 @@ fn select_screen(
     // Worlds down the left side.
     let first_of = |ci: usize| LEVELS.iter().position(|l| l.chapter == ci).unwrap_or(0);
     for (ci, ch) in CHAPTERS.iter().enumerate() {
-        let r = Rect::new(20.0, 84.0 + ci as f32 * 112.0, 330.0, 100.0);
+        let r = Rect::new(20.0, 80.0 + ci as f32 * 101.0, 330.0, 92.0);
         let c = rgb8(ch.color.0, ch.color.1, ch.color.2);
         let open = progress.unlocked(first_of(ci));
         let levels: Vec<usize> = (0..LEVELS.len()).filter(|&i| LEVELS[i].chapter == ci).collect();
@@ -181,7 +181,7 @@ fn select_screen(
         shadow_text(&format!("World {}", ci + 1), r.x + 16.0, r.y + 10.0, 18.0, tc);
         shadow_text(ch.name, r.x + 16.0, r.y + 32.0, 28.0, tc);
         if open {
-            shadow_text(ch.concept, r.x + 16.0, r.y + 68.0, 18.0, rgb8(255, 230, 140));
+            shadow_text(ch.concept, r.x + 16.0, r.y + 64.0, 18.0, rgb8(255, 230, 140));
             star(r.x + r.w - 92.0, r.y + 20.0, 10.0, true);
             shadow_text(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, rgb8(255, 215, 40));
         } else {
@@ -193,7 +193,7 @@ fn select_screen(
             } else {
                 "Locked".to_string()
             };
-            shadow_text(&why, r.x + 16.0, r.y + 68.0, 18.0, rgb8(150, 150, 150));
+            shadow_text(&why, r.x + 16.0, r.y + 64.0, 18.0, rgb8(150, 150, 150));
         }
     }
 
