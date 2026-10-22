@@ -257,6 +257,23 @@ pub fn wrap(s: &str, width: f32, size: f32) -> Vec<String> {
     lines
 }
 
+/// The biggest size from `size` down to `min` at which `s` fits in `width`
+/// on one line (`min` if it never does).
+pub fn fit_size(s: &str, width: f32, size: f32, min: f32) -> f32 {
+    let w = text_width(s, size);
+    if w <= width { size } else { (size * width / w).floor().max(min) }
+}
+
+/// Like `paragraph`, but each line is centred in `width`.
+pub fn centered_paragraph(s: &str, x: f32, y: f32, width: f32, size: f32, c: Color) -> f32 {
+    let lh = size * 1.3;
+    let lines = wrap(s, width, size);
+    for (i, l) in lines.iter().enumerate() {
+        text(l, x + (width - text_width(l, size)) / 2.0, y + i as f32 * lh, size, c);
+    }
+    lines.len() as f32 * lh
+}
+
 /// Draws wrapped text and returns the height it used.
 pub fn paragraph(s: &str, x: f32, y: f32, width: f32, size: f32, c: Color) -> f32 {
     let lh = size * 1.3;

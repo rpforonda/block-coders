@@ -5,6 +5,7 @@ mod check;
 mod editor;
 mod hints;
 mod keyboard;
+mod layout;
 mod levels;
 mod play;
 mod program;
@@ -29,11 +30,22 @@ use ui::*;
 use users::{UsersOut, UsersScreen};
 use world::{Dir, Floor};
 
+/// The window size: the desktop canvas, or BC_WINDOW's size in debug builds.
+fn dev_window() -> (i32, i32) {
+    dev_env("BC_WINDOW")
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((VW as i32, VH as i32))
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "Block Coders".to_string(),
-        window_width: VW as i32,
-        window_height: VH as i32,
+        // BC_WINDOW=390x844 (developer setting) opens a phone-sized window.
+        window_width: dev_window().0,
+        window_height: dev_window().1,
         window_resizable: true,
         // Render at the device's real pixel density in browsers, so phones and
         // tablets (2-3x screens) get sharp text instead of an upscaled blur.
@@ -362,8 +374,13 @@ async fn run() {
 
     loop {
         let (sw, sh) = (screen_width(), screen_height());
-        let scale = (sw / VW).min(sh / VH);
-        let (vw, vh) = (VW * scale, VH * scale);
+        // The play screen reshapes for small screens (see layout.rs); the
+        // other screens are still drawn at 1280x800 and scaled to fit.
+        let (cw, ch, scale) = match &screen {
+            Screen::Play(_) => layout::canvas(sw, sh),
+            _ => (VW, VH, (sw / VW).min(sh / VH)),
+        };
+        let (vw, vh) = (cw * scale, ch * scale);
         let (ox, oy) = ((sw - vw) / 2.0, (sh - vh) / 2.0);
         // screen_width() and mouse_position() are in logical pixels, but the
         // viewport works in physical pixels (2-3x on phones with high_dpi). dpi
@@ -375,8 +392,8 @@ async fn run() {
         set_default_camera();
         clear_background(BLACK);
         set_camera(&Camera2D {
-            target: vec2(VW / 2.0, VH / 2.0),
-            zoom: vec2(2.0 / VW, 2.0 / VH),
+            target: vec2(cw / 2.0, ch / 2.0),
+            zoom: vec2(2.0 / cw, 2.0 / ch),
             viewport: Some(((ox * dpi) as i32, (oy * dpi) as i32, (vw * dpi) as i32, (vh * dpi) as i32)),
             ..Default::default()
         });
@@ -443,7 +460,7 @@ async fn run() {
                     None => {}
                 }
             }
-            Screen::Play(p) => match p.frame(&mut ui, &art, &mut sfx, &mut progress) {
+            Screen::Play(p) => match p.frame(&mut ui, &art, &mut sfx, &mut progress, (cw, ch)) {
                 Nav::Stay => {}
                 Nav::Back => {
                     speed = p.speed();

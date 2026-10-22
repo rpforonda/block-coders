@@ -15,6 +15,7 @@ installing, see the [README](../README.md).
 7. [Curriculum and level design](#curriculum-and-level-design)
    - [World Checks](#world-checks)
 8. [The block editor](#the-block-editor)
+   - [Small screens](#small-screens)
    - [Scrolling](#scrolling)
    - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
@@ -373,6 +374,57 @@ drag blocks inside the program to reorder them).
   press can start a drag, and their edits are collected as an `Edit` value and
   applied after drawing, so the tree is never changed while it's being read.
 
+### Small screens
+
+The game draws on a virtual canvas. On a screen where the desktop's 1280x800
+fits at 80% or more, nothing changes: it's scaled to fit as before. Below that,
+shrinking it would make text 6-9pt on a phone, so the **play screen** gets a
+canvas the shape of the screen at 80% instead (`layout::canvas`), and
+`layout::Layout` places everything for it. The other screens (title, players,
+level select, World Check) are still 1280x800 and scaled: they're next.
+
+- **Wide** (anything wider than tall: desktops, tablets, phones held
+  sideways): the desktop's three columns, resized. Under 1100 wide the blocks
+  and program columns are a little slimmer. At 1280x800 it's exactly the old
+  layout (a test checks every rectangle).
+- **Tall** (phones held upright): the world on top, then the info bar and Bit,
+  then blocks and program side by side, with RUN / STEP / RESET / Speed along
+  the bottom. While a program runs, the blocks step aside and the program fills
+  the width under the world, so kids can watch the running block and the
+  miner together. RESET brings the blocks back. Hint and Goal stack under Bit,
+  so the message gets the full height.
+- **The canvas is never shorter than 520 or narrower than 440.** Phones held
+  sideways (about 375-430 points tall) are shrunk to fit that, so their text is
+  about 14pt rather than 15. Screens under 360 points wide (older than today's
+  phones) are best effort: everything fits, but panels are cramped.
+- Text that might not fit steps down a little, never below 16px: titles,
+  palette labels, Bit's long messages, and the Rust view (down to 11px, so the
+  widest line fits). The info bar shortens its labels when narrow, and popups
+  shrink to the canvas and stack their buttons when narrow.
+- The guided tour's bubble goes beside its spot when there's room, else above
+  or below it. In a browser, `web/storage.js` reports whether the screen is a
+  touch screen (`matchMedia('(pointer: coarse)')`), so the tour says "tap"
+  from the first step. The plugin's version is now 2.
+- `BC_WINDOW=390x844` (debug builds) opens a phone-sized window, for the
+  screenshot autopilot and for trying layouts on the desktop.
+
+**How the layout was chosen.** TypeSafe compared arrangements for each screen
+shape: stacked, tabs, world-and-program with a blocks drawer, and two hybrids.
+It judged them for an 8-12 year old new to computers, given real sizes at a
+readable scale (`target/pedagogy-eval/mobile/`, not committed). Tabs won its
+"easiest overall" vote on upright phones (0.64), but scored 0.34 of 2 on
+watching the miner and the running block together, which is how STEP
+debugging is taught. Stacked-with-run-mode won the vote once the hybrids were
+added (0.66), with 1.96 of 2 on watching both and 1.22 on findability.
+Tabs-that-split-while-running was close (1.88 and 1.37). We took
+stacked-with-run-mode: nothing is ever hidden behind a tab, and the blocks stay
+left of the program as on desktop, so lessons and the tour still read right.
+Columns won for sideways phones and tablets. Re-scored as built (with real
+sizes), upright phones get 1.78 for watching both and 1.31 for findability;
+sideways phones 1.44 and 1.03 (only 4 blocks show at once). No single part was
+judged too small (all at or under 0.53). TypeSafe also picked the short label
+"Show code" for upright phones.
+
 ### Scrolling
 
 The blocks palette and the program (MAIN and FUNCTION) both scroll when they
@@ -581,7 +633,7 @@ screenshots don't show real players' names.
 | macroquad | Bevy, ggez, egui | Small, fast to compile, simple immediate-mode 2D, built-in audio, and it builds for the web. Bevy's ECS is overkill for a grid game. |
 | Click-to-insert *and* drag-and-drop | Only one of them | Clicking is easier for young kids and trackpads. Dragging is faster and is what Scratch users expect. Both use the same slot system. |
 | Undo by whole-program snapshots | An undo entry per edit type | One generic check at the end of the frame can't miss a kind of edit, and programs are tiny. |
-| Fixed 1280×800 virtual canvas | Responsive layout | One layout to design and test, and it works at any window size via letterboxing. |
+| Fixed 1280×800 virtual canvas, reshaped only on small screens | Fully responsive layout | One desktop layout to design and test. Below 80% scale the play screen switches to a screen-shaped canvas with two tested layouts (wide and tall), so phones get readable text. |
 | Procedural assets | Image/sound files | A single self-contained binary, nothing to lose or load, and the art is itself code kids can explore. |
 | Bytecode VM that pauses at actions | Walking the tree with recursion | Stepping, highlighting, animation and instant simulation all share one path. Infinite loops are easy to detect. |
 | One function (no parameters) | Several named functions | Enough to teach reuse at this age. More would need naming UI. |
@@ -597,8 +649,10 @@ screenshots don't show real players' names.
   exist yet. A GitHub Actions matrix could build them.
 - **Web version.** Planned; see [WEB.md](WEB.md). The main change is moving
   saves to browser storage.
-- **Touch screens.** Taps work as clicks, but typing a player name needs a
-  keyboard, and the 1280×800 layout is small on phones.
+- **Touch screens.** Taps work as clicks, and the play screen reshapes for
+  phones (see [Small screens](#small-screens)). The title, players, level
+  select and World Check screens are still 1280×800 scaled down, so they're
+  small on phones.
 - **Accessibility.** No screen reader support. Colors are bold and paired with
   icons and text labels, but they haven't been checked for color blindness.
 - **One function, no parameters, one variable.** Possible next concepts:

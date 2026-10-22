@@ -97,7 +97,8 @@ mod storage {
     /// miniquad compares this with the plugin's version on startup.
     #[unsafe(no_mangle)]
     pub extern "C" fn bc_storage_crate_version() -> u32 {
-        1
+        // 2: the plugin also answers bc_touch_screen (see keyboard.rs).
+        2
     }
 
     /// Returns whether the save was written.

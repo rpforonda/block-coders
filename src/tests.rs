@@ -1092,12 +1092,7 @@ mod guided_tour {
     use crate::play::spot_rect;
     use crate::program::Kind;
     use crate::tour::{allows, bubble, Facts, Out, Spot, Tour, Wait, BUBBLE_MAX_H, STEPS};
-    use crate::ui::{VH, VW};
     use macroquad::math::{vec2, Rect};
-
-    fn on_screen(r: Rect) -> bool {
-        r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= VW && r.y + r.h <= VH
-    }
 
     /// Plays the tour the way a child would and checks it ends after RUN.
     #[test]
@@ -1137,19 +1132,27 @@ mod guided_tour {
         assert_eq!(STEPS.last().unwrap().wait, Wait::Run);
     }
 
+    /// On every screen shape: the bubble is on screen, beside (never on top
+    /// of) what it points at, and at least as wide as the tour needs.
     #[test]
     fn bubbles_never_cover_what_they_point_at() {
-        for (i, s) in STEPS.iter().enumerate() {
-            let spot = spot_rect(s.spot);
-            assert_eq!(spot.is_none(), s.spot == Spot::None);
-            let b = bubble(spot, BUBBLE_MAX_H);
-            assert!(on_screen(b), "step {i}: bubble off screen");
-            if let Some(r) = spot {
-                assert!(on_screen(r), "step {i}: spot off screen");
-                assert!(!b.overlaps(&r), "step {i}: bubble covers the spot");
+        for &(name, sw, sh) in crate::layout::SAMPLE_SCREENS {
+            let (cw, ch, _) = crate::layout::canvas(sw, sh);
+            let lay = crate::layout::Layout::new(cw, ch, false);
+            let on_screen = |r: Rect| r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= cw && r.y + r.h <= ch;
+            for (i, s) in STEPS.iter().enumerate() {
+                let spot = spot_rect(&lay, s.spot);
+                assert_eq!(spot.is_none(), s.spot == Spot::None, "{name} step {i}");
+                let b = bubble(spot, BUBBLE_MAX_H, (cw, ch));
+                assert!(on_screen(b), "{name} step {i}: bubble off screen: {b:?}");
+                assert!(b.w >= 360.0, "{name} step {i}: bubble too narrow ({})", b.w);
+                if let Some(r) = spot {
+                    assert!(on_screen(r), "{name} step {i}: spot off screen");
+                    assert!(!b.overlaps(&r), "{name} step {i}: bubble covers the spot");
+                }
+                // Steps that wait for an action must point at what to click.
+                assert_eq!(s.wait == Wait::Next, !allows(s, spot, spot.map_or(vec2(0.0, 0.0), |r| r.center())), "step {i}");
             }
-            // Steps that wait for an action must point at what to click.
-            assert_eq!(s.wait == Wait::Next, !allows(s, spot, spot.map_or(vec2(0.0, 0.0), |r| r.center())), "step {i}");
         }
     }
 
@@ -1302,17 +1305,18 @@ mod panels {
     /// and every level's blocks can be reached by scrolling.
     #[test]
     fn blocks_never_hide_behind_the_run_controls() {
-        let (palette, list, controls) = crate::play::palette_layout();
+        let lay = crate::layout::Layout::new(VW, VH, false);
+        let (palette, list, controls) = (lay.palette.unwrap(), lay.palette_list().unwrap(), lay.controls);
         assert!(!palette.overlaps(&controls), "the blocks and the run controls must not overlap");
         for r in [palette, controls] {
             assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= VW && r.y + r.h <= VH);
         }
-        for b in crate::play::control_buttons() {
+        for b in [lay.run, lay.step, lay.reset, lay.speed] {
             assert!(controls.contains(b.point()) && controls.contains(b.point() + b.size()), "{b:?} is outside the controls panel");
         }
-        let rows = crate::play::palette_rows();
+        let rows = crate::play::palette_rows(list);
         for i in 0..rows {
-            let b = crate::play::palette_button(i);
+            let b = crate::play::palette_button(list, i);
             assert!(b.y >= list.y && b.y + b.h <= list.y + list.h, "block {i} doesn't fit");
         }
         let most = LEVELS.iter().map(|l| l.palette.len()).max().unwrap();
@@ -1341,5 +1345,121 @@ mod panels {
         bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
         bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
         assert_eq!(scroll, 600.0);
+    }
+}
+
+mod layouts {
+    use crate::layout::{canvas, Layout, Shape, MIN_H, MIN_SCALE, MIN_W, SAMPLE_SCREENS};
+    use crate::play::palette_rows;
+    use crate::ui::{VH, VW};
+    use macroquad::math::Rect;
+
+    /// At 1280x800 the layout is exactly the desktop one it replaced.
+    #[test]
+    fn desktop_layout_is_unchanged() {
+        assert_eq!(canvas(1280.0, 800.0), (VW, VH, 1.0));
+        let l = Layout::new(VW, VH, false);
+        assert_eq!(l.shape, Shape::Wide);
+        let eq = |a: Rect, b: (f32, f32, f32, f32)| assert_eq!((a.x, a.y, a.w, a.h), b);
+        eq(l.world, (16.0, 68.0, 720.0, 480.0));
+        eq(l.hud, (16.0, 558.0, 720.0, 38.0));
+        eq(l.guide, (16.0, 604.0, 720.0, 180.0));
+        eq(l.palette.unwrap(), (752.0, 68.0, 196.0, 548.0));
+        eq(l.controls, (752.0, 628.0, 196.0, 156.0));
+        eq(l.editor, (962.0, 68.0, 302.0, 716.0));
+        eq(l.levels, (14.0, 10.0, 110.0, 36.0));
+        eq(l.code, (800.0, 10.0, 150.0, 36.0));
+        eq(l.help, (962.0, 10.0, 110.0, 36.0));
+        eq(l.sound, (1084.0, 10.0, 180.0, 36.0));
+        eq(l.hint, (120.0, 742.0, 110.0, 32.0));
+        eq(l.goal, (242.0, 742.0, 110.0, 32.0));
+        eq(l.run, (762.0, 638.0, 176.0, 50.0));
+        // A running program doesn't move anything on the desktop.
+        assert_eq!(format!("{l:?}"), format!("{:?}", Layout::new(VW, VH, true)));
+    }
+
+    /// Phones, tablets and small windows get readable text and a layout where
+    /// everything fits, nothing overlaps, and buttons are big enough to tap.
+    #[test]
+    fn every_screen_gets_a_readable_layout() {
+        for &(name, sw, sh) in SAMPLE_SCREENS {
+            let (cw, ch, scale) = canvas(sw, sh);
+            // Only screens smaller than the smallest canvas may go below the readable scale.
+            // Only screens smaller than the smallest canvas go below the readable
+            // scale, and never far below it.
+            assert!(scale >= MIN_SCALE - 1e-4 || sw < MIN_W * MIN_SCALE || sh < MIN_H * MIN_SCALE, "{name}: scale {scale}");
+            assert!(scale >= 0.7, "{name}: text would be too small (scale {scale})");
+            assert!((cw * scale - sw).abs() < 1.0 || (ch * scale - sh).abs() < 1.0, "{name}: the canvas should fill the screen one way");
+            for running in [false, true] {
+                let l = Layout::new(cw, ch, running);
+                let inside = |r: Rect| r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= cw + 0.01 && r.y + r.h <= ch + 0.01;
+                let mut panels = vec![("world", l.world), ("hud", l.hud), ("guide", l.guide), ("controls", l.controls), ("editor", l.editor)];
+                if let Some(p) = l.palette {
+                    panels.push(("palette", p));
+                }
+                let top = [("levels", l.levels), ("code", l.code), ("help", l.help), ("sound", l.sound)];
+                for (n, r) in panels.iter().chain(top.iter()) {
+                    assert!(inside(*r), "{name}: {n} is off the canvas: {r:?}");
+                }
+                for (i, (a, ra)) in panels.iter().chain(top.iter()).enumerate() {
+                    for (b, rb) in panels.iter().chain(top.iter()).skip(i + 1) {
+                        assert!(!ra.overlaps(rb), "{name}: {a} overlaps {b}");
+                    }
+                }
+                for (n, b) in top.iter().chain([("run", l.run), ("step", l.step), ("reset", l.reset), ("speed", l.speed), ("hint", l.hint)].iter()) {
+                    assert!(b.h >= 32.0 && b.w >= 64.0, "{name}: {n} is too small to tap: {b:?}");
+                    let holder = if ["run", "step", "reset", "speed"].contains(n) { l.controls } else if *n == "hint" { l.guide } else { Rect::new(0.0, 0.0, cw, l.top_h) };
+                    assert!(holder.contains(b.point()) && holder.contains(b.point() + b.size()), "{name}: {n} sticks out of its panel");
+                }
+                // Popups fit.
+                for (w, h, y) in [(760.0, 540.0, 120.0), (840.0, 660.0, 70.0), (680.0, 600.0, 130.0)] {
+                    assert!(inside(l.popup(w, h, y)), "{name}: popup {w}x{h} doesn't fit");
+                }
+                // Screens narrower than today's phones (360 points) are best effort:
+                // everything fits without overlapping, but panels may be cramped.
+                if sw < 360.0 {
+                    continue;
+                }
+                assert!(l.world.w >= 300.0 && l.world.h >= 160.0, "{name}: world too small {:?}", l.world);
+                assert!(l.editor.h >= 250.0 && l.editor.w >= 260.0, "{name}: program panel too small {:?}", l.editor);
+                match l.palette_list() {
+                    Some(list) => assert!(palette_rows(list) >= 3, "{name}: only {} blocks fit", palette_rows(list)),
+                    None => assert!(running && l.shape == Shape::Tall, "{name}: the blocks only step aside while running on a tall screen"),
+                }
+            }
+        }
+    }
+
+    /// Phones held upright get the stacked layout; sideways and bigger get columns.
+    #[test]
+    fn shapes_follow_the_screen() {
+        let shape = |sw, sh| {
+            let (cw, ch, _) = canvas(sw, sh);
+            Layout::new(cw, ch, false).shape
+        };
+        assert_eq!(shape(390.0, 844.0), Shape::Tall);
+        assert_eq!(shape(844.0, 390.0), Shape::Wide);
+        assert_eq!(shape(1024.0, 600.0), Shape::Wide);
+        assert_eq!(shape(1920.0, 1080.0), Shape::Wide);
+    }
+}
+
+/// Prints the real sizes of each layout, for the TypeSafe re-check:
+/// `cargo test print_layouts -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_layouts() {
+    use crate::layout::{canvas, Layout};
+    use crate::play::palette_rows;
+    for (name, sw, sh) in [("phone_portrait", 390.0, 844.0), ("phone_landscape", 844.0, 390.0), ("small_tablet", 1024.0, 600.0)] {
+        let (cw, ch, scale) = canvas(sw, sh);
+        for running in [false, true] {
+            let l = Layout::new(cw, ch, running);
+            let rows = ((l.editor.h - 128.0) / 36.0).floor();
+            println!(
+                "{name} running={running} canvas={cw:.0}x{ch:.0} scale={scale:.2} shape={:?} world={:.0}x{:.0} blocks_visible={} program_w={:.0} program_rows={rows} message={:.0}x{:.0}",
+                l.shape, l.world.w, l.world.h, l.palette_list().map_or(0, palette_rows), l.editor.w, l.guide.w - 116.0, l.guide.h - 24.0
+            );
+        }
     }
 }

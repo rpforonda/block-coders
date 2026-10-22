@@ -141,10 +141,12 @@ impl Tour {
         &STEPS[self.step.min(STEPS.len() - 1)]
     }
 
-    /// The step's words, with "tap" for "click" on touch screens.
+    /// The step's words, with "tap" for "click" on touch screens. A first
+    /// touch partway through the tour switches the words over.
     pub fn text(&self) -> String {
         let s = self.current();
-        match (self.touch, s.touch_text) {
+        let touch = self.touch || (cfg!(not(test)) && crate::keyboard::is_touch());
+        match (touch, s.touch_text) {
             (true, Some(t)) => t.to_string(),
             (true, None) => s.text.replace("click", "tap").replace("Click", "Tap").replace("CLICK", "TAP"),
             (false, _) => s.text.to_string(),
@@ -168,21 +170,45 @@ impl Tour {
 }
 
 const BUBBLE_W: f32 = 510.0;
+/// The narrowest a bubble may get to fit beside a spot.
+const BUBBLE_MIN_W: f32 = 380.0;
 /// The tallest a bubble gets; its text must fit in this.
 pub const BUBBLE_MAX_H: f32 = 330.0;
 const TEXT_SIZE: f32 = 19.0;
-/// How wide the text is: the bubble minus Bit on the left.
-const TEXT_W: f32 = BUBBLE_W - 112.0;
+/// Bit's picture on the left of the bubble, and the margin on the right.
+const TEXT_INSET: f32 = 112.0;
 
-/// Where Bit's speech bubble of height `h` goes: beside the spot, never on top of it.
-pub fn bubble(spot: Option<Rect>, h: f32) -> Rect {
+/// Where Bit's speech bubble of height `h` goes on a `canvas` (width,
+/// height): beside the spot if there's room, else above or below it, never
+/// on top of it. It narrows (down to `BUBBLE_MIN_W`) to fit.
+pub fn bubble(spot: Option<Rect>, h: f32, canvas: (f32, f32)) -> Rect {
+    let (cw, ch) = canvas;
+    let full = BUBBLE_W.min(cw - 20.0);
     let Some(s) = spot else {
-        return Rect::new((VW - BUBBLE_W) / 2.0, (VH - h) / 2.0, BUBBLE_W, h);
+        return Rect::new((cw - full) / 2.0, (ch - h) / 2.0, full, h);
     };
-    let x = if s.x + s.w / 2.0 > VW / 2.0 { s.x - 20.0 - BUBBLE_W } else { s.x + s.w + 20.0 };
-    let x = x.clamp(10.0, VW - BUBBLE_W - 10.0);
-    let y = (s.y + s.h / 2.0 - h / 2.0).clamp(66.0, VH - h - 10.0);
-    Rect::new(x, y, BUBBLE_W, h)
+    let y_beside = (s.y + s.h / 2.0 - h / 2.0).clamp(10.0, ch - h - 10.0);
+    let x_under = (s.x + s.w / 2.0 - full / 2.0).clamp(10.0, cw - full - 10.0);
+    let right = cw - 10.0 - (s.x + s.w + 20.0);
+    let left = s.x - 20.0 - 10.0;
+    let below = ch - 10.0 - (s.y + s.h + 20.0);
+    let above = s.y - 20.0 - 10.0;
+    // Beside: the roomier side first. Then above or below.
+    let mut options = vec![
+        (right, Rect::new(s.x + s.w + 20.0, y_beside, right.min(full), h)),
+        (left, Rect::new(s.x - 20.0 - left.min(full), y_beside, left.min(full), h)),
+    ];
+    if left > right {
+        options.swap(0, 1);
+    }
+    options.push((if below >= h { full } else { 0.0 }, Rect::new(x_under, s.y + s.h + 20.0, full, h)));
+    options.push((if above >= h { full } else { 0.0 }, Rect::new(x_under, s.y - 20.0 - h, full, h)));
+    options
+        .iter()
+        .find(|(room, _)| *room >= BUBBLE_MIN_W.min(full))
+        .map(|&(_, r)| r)
+        // Nowhere free: the biggest side, even if it overlaps.
+        .unwrap_or_else(|| Rect::new(x_under, y_beside, full, h))
 }
 
 /// The height of a bubble holding `lines` lines of text.
@@ -197,17 +223,18 @@ pub fn allows(step: &Step, spot: Option<Rect>, mouse: Vec2) -> bool {
 
 /// Draws the dimming, the highlight, a pointing hand and Bit's bubble.
 /// Returns Done if the player finished or skipped the tour.
-pub fn draw(tour: &mut Tour, spot: Option<Rect>, ui: &mut Ui, art: &Art) -> Out {
+pub fn draw(tour: &mut Tour, spot: Option<Rect>, canvas: (f32, f32), ui: &mut Ui, art: &Art) -> Out {
+    let (cw, ch) = canvas;
     let dim = Color::new(0.0, 0.0, 0.0, 0.62);
     match spot {
-        None => draw_rectangle(0.0, 0.0, VW, VH, dim),
+        None => draw_rectangle(0.0, 0.0, cw, ch, dim),
         Some(r) => {
             let pad = 6.0;
             let (x0, y0, x1, y1) = (r.x - pad, r.y - pad, r.x + r.w + pad, r.y + r.h + pad);
-            draw_rectangle(0.0, 0.0, VW, y0, dim);
-            draw_rectangle(0.0, y1, VW, VH - y1, dim);
+            draw_rectangle(0.0, 0.0, cw, y0, dim);
+            draw_rectangle(0.0, y1, cw, ch - y1, dim);
             draw_rectangle(0.0, y0, x0, y1 - y0, dim);
-            draw_rectangle(x1, y0, VW - x1, y1 - y0, dim);
+            draw_rectangle(x1, y0, cw - x1, y1 - y0, dim);
             let pulse = ((get_time() * 4.0).sin() * 0.5 + 0.5) as f32;
             draw_rectangle_lines(x0, y0, x1 - x0, y1 - y0, 4.0 + pulse * 2.0, rgb8(255, 215, 40));
             if tour.current().wait != Wait::Next {
@@ -217,11 +244,13 @@ pub fn draw(tour: &mut Tour, spot: Option<Rect>, ui: &mut Ui, art: &Art) -> Out 
     }
 
     let words = tour.text();
-    let b = bubble(spot, bubble_h(wrap(&words, TEXT_W, TEXT_SIZE).len()));
+    // How wide the bubble can be here decides how the words wrap, and so its height.
+    let text_w = bubble(spot, BUBBLE_MAX_H, canvas).w - TEXT_INSET;
+    let b = bubble(spot, bubble_h(wrap(&words, text_w, TEXT_SIZE).len()), canvas);
     panel(b);
     draw_tex(&art.bit, b.x + 16.0, b.y + 16.0, 64.0, 64.0, WHITE);
     text(&format!("{} of {}", tour.step + 1, STEPS.len()), b.x + 22.0, b.y + 88.0, 15.0, rgb8(90, 90, 100));
-    paragraph(&words, b.x + 96.0, b.y + 18.0, TEXT_W, TEXT_SIZE, rgb8(30, 30, 30));
+    paragraph(&words, b.x + 96.0, b.y + 18.0, b.w - TEXT_INSET, TEXT_SIZE, rgb8(30, 30, 30));
     let mut out = Out::Stay;
     if tour.current().wait == Wait::Next
         && ui.button(Rect::new(b.x + b.w - 146.0, b.y + b.h - 54.0, 130.0, 40.0), "NEXT >", rgb8(60, 170, 60), 22.0)
