@@ -15,6 +15,7 @@ installing, see the [README](../README.md).
 7. [Curriculum and level design](#curriculum-and-level-design)
    - [World Checks](#world-checks)
 8. [The block editor](#the-block-editor)
+   - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
 11. [Packaging](#packaging)
@@ -362,6 +363,29 @@ drags, deletes, count and condition changes, Clear, and the parent "load
 solution" shortcut. Undo and Redo swap versions between the stacks and set a
 flag so the swap itself isn't recorded. History holds 100 steps and lasts while
 the level is open.
+
+### The guided tour
+
+The first time a player opens level 1 (an empty program), `tour.rs` runs a
+9-step tour instead of the intro popup. It covers what clicking or tapping is,
+the world, blocks, the program, STEP/RESET, Hint/Goal, Help and RUN.
+
+- **One spot at a time.** Each step names a `Spot`, and `play.rs` maps it to a
+  screen rectangle using the same constants that draw the buttons, so the
+  highlight can't drift from the real button. Everything else is dimmed.
+- **Clicks are gated, not faked.** At the start of the frame, a click outside
+  the spot is taken away from the screen and handed back only to the tour's
+  own NEXT and *Skip tour* buttons. Right-clicks and keyboard shortcuts are off
+  during the tour (Escape skips it). The pointing hand is drawn, not real input.
+- **Steps finish on real actions** (`Wait`): pressing NEXT, the program having
+  1 or 4 blocks, or RUN starting. The tour ends when RUN starts, before the
+  victory popup.
+- **Touch screens** get "tap" instead of "click", and their own first step.
+- **Nothing is saved.** The tour shows whenever level 1 opens with an empty
+  program, and level 1's Help popup has *Show me around*. No new save data.
+- Tests check that the tour can be finished, that it matches level 1, that no
+  bubble covers its spot, and the touch wording. `BC_TOUR=1` keeps the tour up
+  in the screenshot autopilot so `BC_INPUT` can click through it.
 
 **Following the running block:** while a program runs, the editor switches to
 the tab (MAIN or FUNCTION) that holds the highlighted block. It does this

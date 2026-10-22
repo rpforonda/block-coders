@@ -1060,3 +1060,83 @@ mod smart_hints {
         }
     }
 }
+
+mod guided_tour {
+    use crate::levels::LEVELS;
+    use crate::play::spot_rect;
+    use crate::program::Kind;
+    use crate::tour::{allows, bubble, Facts, Out, Spot, Tour, Wait, BUBBLE_MAX_H, STEPS};
+    use crate::ui::{VH, VW};
+    use macroquad::math::{vec2, Rect};
+
+    fn on_screen(r: Rect) -> bool {
+        r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= VW && r.y + r.h <= VH
+    }
+
+    /// Plays the tour the way a child would and checks it ends after RUN.
+    #[test]
+    fn the_tour_can_be_finished() {
+        let mut t = Tour::new(false);
+        let mut blocks = 0;
+        for _ in 0..STEPS.len() {
+            let out = match t.current().wait {
+                Wait::Next => t.next(),
+                Wait::Blocks(n) => {
+                    assert_eq!(t.update(&Facts { main_blocks: n - 1, running: false }), Out::Stay);
+                    assert_eq!(t.current().wait, Wait::Blocks(n), "moved on too early");
+                    blocks = n;
+                    t.update(&Facts { main_blocks: n, running: false })
+                }
+                Wait::Run => {
+                    assert_eq!(t.update(&Facts { main_blocks: blocks, running: false }), Out::Stay);
+                    t.update(&Facts { main_blocks: blocks, running: true })
+                }
+            };
+            if out == Out::Done {
+                assert_eq!(t.step, STEPS.len(), "only the last step may finish the tour");
+                return;
+            }
+        }
+        panic!("the tour never finished");
+    }
+
+    /// The tour talks about level 1: a FORWARD block first in the palette,
+    /// and a portal 4 squares away.
+    #[test]
+    fn the_tour_matches_level_one() {
+        let l = &LEVELS[0];
+        assert_eq!(l.palette[0], Kind::Forward);
+        assert_eq!(l.solution, "F F F F");
+        assert!(STEPS.iter().any(|s| s.wait == Wait::Blocks(4)));
+        assert_eq!(STEPS.last().unwrap().wait, Wait::Run);
+    }
+
+    #[test]
+    fn bubbles_never_cover_what_they_point_at() {
+        for (i, s) in STEPS.iter().enumerate() {
+            let spot = spot_rect(s.spot);
+            assert_eq!(spot.is_none(), s.spot == Spot::None);
+            let b = bubble(spot, BUBBLE_MAX_H);
+            assert!(on_screen(b), "step {i}: bubble off screen");
+            if let Some(r) = spot {
+                assert!(on_screen(r), "step {i}: spot off screen");
+                assert!(!b.overlaps(&r), "step {i}: bubble covers the spot");
+            }
+            // Steps that wait for an action must point at what to click.
+            assert_eq!(s.wait == Wait::Next, !allows(s, spot, spot.map_or(vec2(0.0, 0.0), |r| r.center())), "step {i}");
+        }
+    }
+
+    #[test]
+    fn touch_screens_say_tap() {
+        for (step, s) in STEPS.iter().enumerate() {
+            let t = Tour { step, touch: true };
+            let words = t.text().to_lowercase();
+            assert!(!words.contains("click") && !words.contains("mouse"), "step {step}: {words}");
+            // "clicking" would become "taping".
+            assert!(!s.text.to_lowercase().contains("clicking"));
+            // Long enough to fit Bit's tallest bubble with room to spare.
+            assert!(t.text().len() <= 300, "step {step} is too long for its bubble");
+        }
+    }
+}

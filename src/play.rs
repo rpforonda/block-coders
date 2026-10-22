@@ -12,6 +12,7 @@ use crate::program::{contains, Action, Program, Step, Vm};
 use crate::save::{Progress, Saved};
 use crate::sound::{Sfx, Sounds};
 use crate::ui::*;
+use crate::tour::{self, Facts, Spot, Tour};
 use crate::world::{Dir, Failure, Outcome, Tile, World};
 use macroquad::prelude::*;
 
@@ -20,6 +21,14 @@ const HUD_Y: f32 = 558.0;
 const GUIDE: Rect = Rect { x: 16.0, y: 604.0, w: 720.0, h: 180.0 };
 const PALETTE: Rect = Rect { x: 752.0, y: 68.0, w: 196.0, h: 716.0 };
 const EDITOR: Rect = Rect { x: 962.0, y: 68.0, w: 302.0, h: 716.0 };
+const HELP_BUTTON: Rect = Rect { x: 962.0, y: 10.0, w: 110.0, h: 36.0 };
+const RUN_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: PALETTE.y + PALETTE.h - 146.0, w: PALETTE.w - 20.0, h: 50.0 };
+const HALF: f32 = (PALETTE.w - 30.0) / 2.0;
+const STEP_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
+const RESET_BUTTON: Rect = Rect { x: PALETTE.x + 20.0 + HALF, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
+const SPEED_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: RUN_BUTTON.y + 106.0, w: PALETTE.w - 20.0, h: 32.0 };
+const HINT_BUTTON: Rect = Rect { x: GUIDE.x + 104.0, y: GUIDE.y + GUIDE.h - 42.0, w: 110.0, h: 32.0 };
+const GOAL_BUTTON: Rect = Rect { x: HINT_BUTTON.x + 122.0, ..HINT_BUTTON };
 const SPEEDS: [(&str, f32); 4] = [("Slow", 0.9), ("Normal", 0.5), ("Fast", 0.22), ("Turbo", 0.07)];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -135,6 +144,29 @@ pub struct Play {
     /// (serialized program, seed), and how many have been shown.
     hints: Option<(String, u64, Vec<Hint>)>,
     hints_shown: usize,
+    /// The guided tour, while it runs.
+    tour: Option<Tour>,
+    /// A click the tour kept from reaching the screen, for its own buttons.
+    tour_click: bool,
+}
+
+/// Where palette block `i` is drawn.
+fn palette_button(i: usize) -> Rect {
+    Rect::new(PALETTE.x + 10.0, PALETTE.y + 42.0 + i as f32 * 51.0, PALETTE.w - 20.0, 44.0)
+}
+
+/// Where each spot the tour points at is on screen.
+pub fn spot_rect(spot: Spot) -> Option<Rect> {
+    Some(match spot {
+        Spot::None => return None,
+        Spot::World => WORLD_AREA,
+        Spot::FirstBlock => palette_button(0),
+        Spot::Program => EDITOR,
+        Spot::StepReset => Rect::new(STEP_BUTTON.x, STEP_BUTTON.y, RESET_BUTTON.x + RESET_BUTTON.w - STEP_BUTTON.x, STEP_BUTTON.h),
+        Spot::HintGoal => Rect::new(HINT_BUTTON.x, HINT_BUTTON.y, GOAL_BUTTON.x + GOAL_BUTTON.w - HINT_BUTTON.x, HINT_BUTTON.h),
+        Spot::Help => HELP_BUTTON,
+        Spot::Run => RUN_BUTTON,
+    })
 }
 
 fn fresh_seed() -> u64 {
@@ -148,6 +180,9 @@ fn ease(t: f32) -> f32 {
 impl Play {
     pub fn new(idx: usize, saved: Option<Program>, speed: usize, shirt: usize) -> Play {
         let level = &LEVELS[idx];
+        let program = saved.unwrap_or_default();
+        // A first visit to level 1 gets the guided tour instead of the intro.
+        let tour = (idx == 0 && program.is_empty()).then(|| Tour::new(crate::keyboard::is_touch()));
         let seed = fresh_seed();
         let start = World::from_level(level, seed);
         let mut p = Play {
@@ -156,7 +191,7 @@ impl Play {
             seed,
             world: start.clone(),
             start,
-            program: saved.unwrap_or_default(),
+            program,
             editor: Editor::new(),
             state: RunState::Editing,
             vm: None,
@@ -169,7 +204,7 @@ impl Play {
             running_id: None,
             error_id: None,
             speed,
-            modal: if level.intro.is_some() { Modal::Intro } else { Modal::None },
+            modal: if level.intro.is_some() && tour.is_none() { Modal::Intro } else { Modal::None },
             win_timer: None,
             stars: 0,
             shake: 0.0,
@@ -180,6 +215,8 @@ impl Play {
             followed: None,
             hints: None,
             hints_shown: 0,
+            tour,
+            tour_click: false,
         };
         p.reset_run();
         p
@@ -192,6 +229,7 @@ impl Play {
     // Hooks for the screenshot autopilot (see BC_SHOT in main.rs).
     pub fn debug_solve(&mut self) {
         self.modal = Modal::None;
+        self.tour = None;
         let src = crate::dev_env("BC_PROGRAM").unwrap_or_else(|| self.level.solution.to_string());
         self.program = Program::deserialize(&src).unwrap_or_default();
     }
@@ -200,6 +238,7 @@ impl Play {
     }
     pub fn debug_run(&mut self, sfx: &Sounds) {
         self.modal = Modal::None;
+        self.tour = None;
         self.start(false);
         self.step_once(sfx);
     }
@@ -542,8 +581,23 @@ impl Play {
         let mut nav = Nav::Stay;
         let modal_open = !matches!(self.modal, Modal::None);
 
+        // During the tour, only the spot it points at can be clicked.
+        let tour_spot = self.tour.as_ref().and_then(|t| spot_rect(t.current().spot));
+        self.tour_click = false;
+        if let Some(t) = &self.tour {
+            if ui.click && !tour::allows(t.current(), tour_spot, ui.mouse) {
+                ui.click = false;
+                self.tour_click = true;
+            }
+            ui.rclick = false;
+        }
+
         // Keyboard shortcuts
-        if !modal_open {
+        if self.tour.is_some() {
+            if is_key_pressed(KeyCode::Escape) {
+                self.tour = None;
+            }
+        } else if !modal_open {
             if is_key_pressed(KeyCode::Enter) {
                 self.press_run(sfx);
             }
@@ -600,7 +654,7 @@ impl Play {
             sfx.play(Sfx::Click);
             self.modal = Modal::Code;
         }
-        if ui.button(Rect::new(962.0, 10.0, 110.0, 36.0), "Help", rgb8(60, 140, 90), 18.0) {
+        if ui.button(HELP_BUTTON, "Help", rgb8(60, 140, 90), 18.0) {
             sfx.play(Sfx::Click);
             if self.level.intro.is_some() {
                 self.modal = Modal::Intro;
@@ -661,6 +715,7 @@ impl Play {
         if let Some(n) = self.draw_modal(ui, art, sfx, progress) {
             nav = n;
         }
+        self.draw_tour(ui, art);
 
         // Record this frame's change (if any) for Undo.
         if !self.restoring && before.serialize() != self.program.serialize() {
@@ -672,6 +727,21 @@ impl Play {
         }
         self.restoring = false;
         nav
+    }
+
+    /// Moves the tour on when the player has done what it asked, and draws it.
+    fn draw_tour(&mut self, ui: &mut Ui, art: &Art) {
+        let facts = Facts { main_blocks: self.program.main.len(), running: self.state != RunState::Editing };
+        let Some(t) = &mut self.tour else { return };
+        let mut out = t.update(&facts);
+        if out == tour::Out::Stay {
+            // The tour's own buttons get the click it held back.
+            ui.click = self.tour_click;
+            out = tour::draw(t, spot_rect(t.current().spot), ui, art);
+        }
+        if out == tour::Out::Done {
+            self.tour = None;
+        }
     }
 
     fn undo(&mut self, progress: &mut Progress, sfx: &Sounds) {
@@ -914,11 +984,11 @@ impl Play {
         draw_triangle(vec2(tx - 12.0, r.y + 50.0), vec2(tx, r.y + 42.0), vec2(tx, r.y + 58.0), rgb8(60, 60, 72));
         draw_rectangle(tx, r.y + 12.0, r.w - 116.0, r.h - 62.0, rgb8(60, 60, 72));
         paragraph(&self.msg, tx + 10.0, r.y + 20.0, r.w - 136.0, 19.0, color);
-        if ui.button(Rect::new(tx, r.y + r.h - 42.0, 110.0, 32.0), "Hint", rgb8(200, 160, 40), 18.0) {
+        if ui.button(HINT_BUTTON, "Hint", rgb8(200, 160, 40), 18.0) {
             sfx.play(Sfx::Click);
             self.show_hint();
         }
-        if ui.button(Rect::new(tx + 122.0, r.y + r.h - 42.0, 110.0, 32.0), "Goal", rgb8(90, 90, 110), 18.0) {
+        if ui.button(GOAL_BUTTON, "Goal", rgb8(90, 90, 110), 18.0) {
             sfx.play(Sfx::Click);
             let g = self.goal_text();
             self.say(g, MsgKind::Info);
@@ -937,9 +1007,8 @@ impl Play {
         dark_panel(r);
         shadow_text("BLOCKS", r.x + 12.0, r.y + 9.0, 22.0, WHITE);
         let full = self.level.max_blocks.is_some_and(|m| self.program.block_count() >= m);
-        let mut y = r.y + 42.0;
-        for &k in self.level.palette {
-            let b = Rect::new(r.x + 10.0, y, r.w - 20.0, 44.0);
+        for (i, &k) in self.level.palette.iter().enumerate() {
+            let b = palette_button(i);
             let c = if full { rgb8(90, 90, 90) } else { kind_color(k) };
             let hover = ui.hover(b) && !full;
             bevel(b, if hover { shade(c, 1.18) } else { c });
@@ -961,11 +1030,9 @@ impl Play {
                 );
                 sfx.play(Sfx::Bonk);
             }
-            y += 51.0;
         }
 
         // Run controls
-        let cy = r.y + r.h - 146.0;
         let run_label = match (self.state, self.stepping) {
             (RunState::Running, false) => "PAUSE",
             (RunState::Running, true) => "RUN >",
@@ -973,19 +1040,18 @@ impl Play {
             _ => "RUN >",
         };
         let run_color = if self.state == RunState::Running && !self.stepping { rgb8(200, 150, 30) } else { rgb8(60, 170, 60) };
-        if ui.button(Rect::new(r.x + 10.0, cy, r.w - 20.0, 50.0), run_label, run_color, 26.0) {
+        if ui.button(RUN_BUTTON, run_label, run_color, 26.0) {
             self.press_run(sfx);
         }
-        let half = (r.w - 30.0) / 2.0;
-        if ui.button(Rect::new(r.x + 10.0, cy + 60.0, half, 36.0), "STEP", rgb8(70, 130, 180), 20.0) {
+        if ui.button(STEP_BUTTON, "STEP", rgb8(70, 130, 180), 20.0) {
             self.press_step(sfx);
         }
-        if ui.button(Rect::new(r.x + 20.0 + half, cy + 60.0, half, 36.0), "RESET", rgb8(150, 70, 60), 20.0) {
+        if ui.button(RESET_BUTTON, "RESET", rgb8(150, 70, 60), 20.0) {
             sfx.play(Sfx::Click);
             self.reset_run();
         }
         let speed_label = format!("Speed: {}", SPEEDS[self.speed].0);
-        if ui.button(Rect::new(r.x + 10.0, cy + 106.0, r.w - 20.0, 32.0), &speed_label, rgb8(90, 90, 110), 18.0) {
+        if ui.button(SPEED_BUTTON, &speed_label, rgb8(90, 90, 110), 18.0) {
             sfx.play(Sfx::Click);
             self.speed = (self.speed + 1) % SPEEDS.len();
         }
@@ -1005,6 +1071,14 @@ impl Play {
                 if ui.button(Rect::new(r.x + r.w / 2.0 - 110.0, r.y + r.h - 66.0, 220.0, 48.0), "Let's go!", rgb8(60, 170, 60), 26.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
+                }
+                // Level 1 can replay the guided tour.
+                if self.idx == 0
+                    && ui.button(Rect::new(r.x + 24.0, r.y + r.h - 60.0, 180.0, 36.0), "Show me around", rgb8(70, 130, 180), 18.0)
+                {
+                    sfx.play(Sfx::Click);
+                    self.modal = Modal::None;
+                    self.tour = Some(Tour::new(crate::keyboard::is_touch()));
                 }
                 None
             }

@@ -11,6 +11,7 @@ mod program;
 mod questions;
 mod save;
 mod sound;
+mod tour;
 mod ui;
 mod users;
 mod world;
@@ -519,7 +520,8 @@ async fn run() {
                 45 => {
                     shot("3-intro");
                     match &mut screen {
-                        Screen::Play(p) => p.debug_solve(),
+                        // BC_TOUR=1 keeps level 1's guided tour up for BC_INPUT to click through.
+                        Screen::Play(p) if dev_env("BC_TOUR").is_none() => p.debug_solve(),
                         // A World Check has nothing else to show unless BC_INPUT drives it.
                         Screen::Check(_) if input_script.is_empty() => break,
                         _ => {}
