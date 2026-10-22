@@ -170,6 +170,7 @@ def ask(body, key):
 POSITION_FAIL = 0.7
 POSITION_REVIEW = 0.3
 AGREEMENT_SURE = 0.8
+SUPPORTS_REVIEW = 0.7
 READING_REVIEW = 1.0
 REASONING_REVIEW = 0.3
 
@@ -190,6 +191,10 @@ def decide(q, a):
             )
         elif ag["choice"] == "says_nothing":
             reviews.append(f"doesn't support the right answer (confidence {ag['confidence']:.2f})")
+        elif ag["confidence"] < SUPPORTS_REVIEW:
+            # Usually the explanation doesn't use the answer's own words, so a
+            # kid may not connect the two.
+            reviews.append(f"only weakly supports the right answer (confidence {ag['confidence']:.2f})")
     r = a["reading"]["score"]
     if r < READING_REVIEW:
         reviews.append(f"hard reading for 8-12 (score {r:.2f} of 2)")
