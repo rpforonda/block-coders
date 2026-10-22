@@ -19,14 +19,22 @@ use macroquad::prelude::*;
 const WORLD_AREA: Rect = Rect { x: 16.0, y: 68.0, w: 720.0, h: 480.0 };
 const HUD_Y: f32 = 558.0;
 const GUIDE: Rect = Rect { x: 16.0, y: 604.0, w: 720.0, h: 180.0 };
-const PALETTE: Rect = Rect { x: 752.0, y: 68.0, w: 196.0, h: 716.0 };
+/// The blocks to choose from. It scrolls when they don't all fit.
+const PALETTE: Rect = Rect { x: 752.0, y: 68.0, w: 196.0, h: 548.0 };
+/// Where the palette's blocks are listed, under its title.
+const PALETTE_LIST: Rect = Rect { x: PALETTE.x, y: PALETTE.y + 38.0, w: PALETTE.w, h: PALETTE.h - 40.0 };
+/// RUN, STEP, RESET and speed, in their own panel under the blocks.
+const CONTROLS: Rect = Rect { x: 752.0, y: PALETTE.y + PALETTE.h + 12.0, w: 196.0, h: 156.0 };
 const EDITOR: Rect = Rect { x: 962.0, y: 68.0, w: 302.0, h: 716.0 };
 const HELP_BUTTON: Rect = Rect { x: 962.0, y: 10.0, w: 110.0, h: 36.0 };
-const RUN_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: PALETTE.y + PALETTE.h - 146.0, w: PALETTE.w - 20.0, h: 50.0 };
-const HALF: f32 = (PALETTE.w - 30.0) / 2.0;
-const STEP_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
-const RESET_BUTTON: Rect = Rect { x: PALETTE.x + 20.0 + HALF, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
-const SPEED_BUTTON: Rect = Rect { x: PALETTE.x + 10.0, y: RUN_BUTTON.y + 106.0, w: PALETTE.w - 20.0, h: 32.0 };
+const RUN_BUTTON: Rect = Rect { x: CONTROLS.x + 10.0, y: CONTROLS.y + 10.0, w: CONTROLS.w - 20.0, h: 50.0 };
+const HALF: f32 = (CONTROLS.w - 30.0) / 2.0;
+const STEP_BUTTON: Rect = Rect { x: CONTROLS.x + 10.0, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
+const RESET_BUTTON: Rect = Rect { x: CONTROLS.x + 20.0 + HALF, y: RUN_BUTTON.y + 60.0, w: HALF, h: 36.0 };
+const SPEED_BUTTON: Rect = Rect { x: CONTROLS.x + 10.0, y: RUN_BUTTON.y + 106.0, w: CONTROLS.w - 20.0, h: 32.0 };
+/// Height of one palette block, and the step from one to the next.
+const BLOCK_H: f32 = 44.0;
+const BLOCK_STEP: f32 = 51.0;
 const HINT_BUTTON: Rect = Rect { x: GUIDE.x + 104.0, y: GUIDE.y + GUIDE.h - 42.0, w: 110.0, h: 32.0 };
 const GOAL_BUTTON: Rect = Rect { x: HINT_BUTTON.x + 122.0, ..HINT_BUTTON };
 const SPEEDS: [(&str, f32); 4] = [("Slow", 0.9), ("Normal", 0.5), ("Fast", 0.22), ("Turbo", 0.07)];
@@ -148,15 +156,34 @@ pub struct Play {
     hints_shown: usize,
     /// Lights up the count box when a block changes it (1 = just changed).
     count_flash: f32,
+    /// How far the palette's list of blocks is scrolled, and its scrollbar.
+    palette_scroll: f32,
+    palette_bar: Scrollbar,
     /// The guided tour, while it runs.
     tour: Option<Tour>,
     /// A click the tour kept from reaching the screen, for its own buttons.
     tour_click: bool,
 }
 
-/// Where palette block `i` is drawn.
-fn palette_button(i: usize) -> Rect {
-    Rect::new(PALETTE.x + 10.0, PALETTE.y + 42.0 + i as f32 * 51.0, PALETTE.w - 20.0, 44.0)
+/// The blocks panel, its list area, and the run controls panel (for tests).
+#[cfg(test)]
+pub fn palette_layout() -> (Rect, Rect, Rect) {
+    (PALETTE, PALETTE_LIST, CONTROLS)
+}
+
+#[cfg(test)]
+pub fn control_buttons() -> [Rect; 4] {
+    [RUN_BUTTON, STEP_BUTTON, RESET_BUTTON, SPEED_BUTTON]
+}
+
+/// Where palette block `i` is drawn when the palette isn't scrolled.
+pub fn palette_button(i: usize) -> Rect {
+    Rect::new(PALETTE_LIST.x + 10.0, PALETTE_LIST.y + 4.0 + i as f32 * BLOCK_STEP, PALETTE_LIST.w - 20.0, BLOCK_H)
+}
+
+/// How many palette blocks fit in the list at once.
+pub fn palette_rows() -> usize {
+    ((PALETTE_LIST.h - 4.0 - BLOCK_H) / BLOCK_STEP) as usize + 1
 }
 
 /// Where each spot the tour points at is on screen.
@@ -220,6 +247,8 @@ impl Play {
             hints: None,
             hints_shown: 0,
             count_flash: 0.0,
+            palette_scroll: 0.0,
+            palette_bar: Scrollbar::default(),
             tour,
             tour_click: false,
         };
@@ -1042,8 +1071,28 @@ impl Play {
         dark_panel(r);
         shadow_text("BLOCKS", r.x + 12.0, r.y + 9.0, 22.0, WHITE);
         let full = self.level.max_blocks.is_some_and(|m| self.program.block_count() >= m);
+        // Scroll the list when it's taller than the panel (wheel or scrollbar).
+        // It moves a whole block at a time, so no block is ever cut in half.
+        let list = PALETTE_LIST;
+        let hidden = self.level.palette.len().saturating_sub(palette_rows());
+        let overflow = hidden > 0;
+        if ui.hover(list) && ui.wheel != 0.0 {
+            self.palette_scroll -= ui.wheel.signum() * BLOCK_STEP;
+        }
+        let track = Rect::new(list.x + list.w - SCROLLBAR_W - 4.0, list.y, SCROLLBAR_W, list.h);
+        let content = list.h + hidden as f32 * BLOCK_STEP;
+        self.palette_bar.update(ui, track, content, list.h, &mut self.palette_scroll);
+        let first = ((self.palette_scroll / BLOCK_STEP).round() as usize).min(hidden);
         for (i, &k) in self.level.palette.iter().enumerate() {
-            let b = palette_button(i);
+            let mut b = palette_button(i);
+            b.y -= first as f32 * BLOCK_STEP;
+            if overflow {
+                b.w -= SCROLLBAR_W + 2.0;
+            }
+            // Only whole blocks are shown, so a hidden one can't be clicked.
+            if b.y < list.y - 1.0 || b.y + b.h > list.y + list.h + 1.0 {
+                continue;
+            }
             let c = if full { rgb8(90, 90, 90) } else { kind_color(k) };
             let hover = ui.hover(b) && !full;
             bevel(b, if hover { shade(c, 1.18) } else { c });
@@ -1067,7 +1116,8 @@ impl Play {
             }
         }
 
-        // Run controls
+        // Run controls, in their own panel.
+        dark_panel(CONTROLS);
         let run_label = match (self.state, self.stepping) {
             (RunState::Running, false) => "PAUSE",
             (RunState::Running, true) => "RUN >",

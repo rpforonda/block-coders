@@ -236,6 +236,7 @@ pub struct Editor {
     pub tab: Tab,
     pub cursor: Cursor,
     scroll: f32,
+    bar: Scrollbar,
     follow_cursor: bool,
     last_highlight: Option<u32>,
     drag: Option<Drag>,
@@ -249,6 +250,7 @@ impl Editor {
             tab: Tab::Main,
             cursor: Cursor { list: LPath::root(Tab::Main), index: usize::MAX },
             scroll: 0.0,
+            bar: Scrollbar::default(),
             follow_cursor: true,
             last_highlight: None,
             drag: None,
@@ -420,11 +422,15 @@ impl Editor {
         }
         self.last_highlight = shown;
         self.scroll = self.scroll.clamp(0.0, (content_h - rows_area.h).max(0.0));
+        // A long program gets a scrollbar on the right, and its blocks make room for it.
+        let track = Rect::new(area.x + area.w - SCROLLBAR_W - 3.0, rows_area.y, SCROLLBAR_W, rows_area.h);
+        self.bar.update(ui, track, content_h, rows_area.h, &mut self.scroll);
+        let bar_w = if content_h > rows_area.h { SCROLLBAR_W + 2.0 } else { 0.0 };
 
         let top = rows_area.y - self.scroll;
         let visible = |y: f32, h: f32| y >= rows_area.y - 1.0 && y + h <= rows_area.y + rows_area.h + 1.0;
         let bx = |depth: usize| area.x + 8.0 + depth as f32 * INDENT;
-        let bw = |depth: usize| area.w - 16.0 - depth as f32 * INDENT;
+        let bw = |depth: usize| area.w - 16.0 - bar_w - depth as f32 * INDENT;
 
         if root.is_empty() {
             let msg = if self.tab == Tab::Func {
@@ -587,14 +593,6 @@ impl Editor {
                 draw_rectangle(bx(s.depth), y - 3.0, bw(s.depth), 6.0, c);
                 draw_triangle(vec2(bx(s.depth) - 8.0, y - 7.0), vec2(bx(s.depth) - 8.0, y + 7.0), vec2(bx(s.depth), y), c);
             }
-        }
-
-        // Scroll hints
-        if self.scroll > 0.0 {
-            text_centered("^ more ^", Rect::new(area.x, rows_area.y - 2.0, area.w, 14.0), 14.0, rgb8(200, 200, 200), false);
-        }
-        if content_h - self.scroll > rows_area.h + 1.0 {
-            text_centered("v more v", Rect::new(area.x, rows_area.y + rows_area.h - 12.0, area.w, 14.0), 14.0, rgb8(200, 200, 200), false);
         }
 
         // Footer: block counter, undo/redo and clear.

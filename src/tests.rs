@@ -1288,3 +1288,58 @@ mod variables {
         }
     }
 }
+
+mod panels {
+    use crate::levels::LEVELS;
+    use crate::ui::{Scrollbar, Ui, VH, VW};
+    use macroquad::math::{vec2, Rect};
+
+    fn ui_at(x: f32, y: f32, click: bool, down: bool) -> Ui {
+        Ui { mouse: vec2(x, y), click, rclick: false, release: !down, down, wheel: 0.0, enabled: true, clicked_any: false }
+    }
+
+    /// The run controls have their own panel, so no block can hide behind them,
+    /// and every level's blocks can be reached by scrolling.
+    #[test]
+    fn blocks_never_hide_behind_the_run_controls() {
+        let (palette, list, controls) = crate::play::palette_layout();
+        assert!(!palette.overlaps(&controls), "the blocks and the run controls must not overlap");
+        for r in [palette, controls] {
+            assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= VW && r.y + r.h <= VH);
+        }
+        for b in crate::play::control_buttons() {
+            assert!(controls.contains(b.point()) && controls.contains(b.point() + b.size()), "{b:?} is outside the controls panel");
+        }
+        let rows = crate::play::palette_rows();
+        for i in 0..rows {
+            let b = crate::play::palette_button(i);
+            assert!(b.y >= list.y && b.y + b.h <= list.y + list.h, "block {i} doesn't fit");
+        }
+        let most = LEVELS.iter().map(|l| l.palette.len()).max().unwrap();
+        assert!(most > rows, "test the scrolling case: the biggest palette ({most}) should need it");
+    }
+
+    #[test]
+    fn scrollbar_drags_pages_and_hides() {
+        let track = Rect::new(100.0, 100.0, 14.0, 400.0);
+        let mut bar = Scrollbar::default();
+        let mut scroll = 0.0;
+        // Everything fits: no bar, no scroll.
+        assert!(bar.handle(&mut ui_at(107.0, 150.0, true, true), track, 300.0, 400.0, &mut scroll).is_none());
+        // Click below the thumb: down a page.
+        let thumb = bar.handle(&mut ui_at(0.0, 0.0, false, false), track, 1000.0, 400.0, &mut scroll).unwrap();
+        assert_eq!(thumb.y, track.y);
+        bar.handle(&mut ui_at(107.0, 490.0, true, true), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 320.0);
+        // Grab the thumb and drag it to the bottom: the end of the list.
+        let thumb = bar.handle(&mut ui_at(0.0, 0.0, false, false), track, 1000.0, 400.0, &mut scroll).unwrap();
+        let grab_y = thumb.y + 5.0;
+        bar.handle(&mut ui_at(107.0, grab_y, true, true), track, 1000.0, 400.0, &mut scroll);
+        bar.handle(&mut ui_at(107.0, grab_y + 1000.0, false, true), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 600.0, "can't scroll past the end");
+        // Let go, and the thumb stops following the mouse.
+        bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
+        bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 600.0);
+    }
+}

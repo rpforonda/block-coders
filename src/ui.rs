@@ -121,6 +121,53 @@ impl Ui {
     }
 }
 
+/// Width of a scrollbar, wide enough to grab with a finger on a touch screen.
+pub const SCROLLBAR_W: f32 = 14.0;
+
+/// A vertical scrollbar for a list taller than the box it's shown in. Drag
+/// the thumb, or click the track above or below it to move a page. This also
+/// works where there's no mouse wheel (touch screens, some trackpads).
+#[derive(Default)]
+pub struct Scrollbar {
+    /// While the thumb is held: the mouse y and the scroll when it was grabbed.
+    grab: Option<(f32, f32)>,
+}
+
+impl Scrollbar {
+    /// Handles the mouse and draws the bar in `track`. Call it before drawing
+    /// the list, so a click on the bar never reaches the list. Does nothing
+    /// (and draws nothing) when `content` fits in `view`.
+    pub fn update(&mut self, ui: &mut Ui, track: Rect, content: f32, view: f32, scroll: &mut f32) {
+        let Some(thumb) = self.handle(ui, track, content, view, scroll) else { return };
+        draw_rectangle(track.x, track.y, track.w, track.h, Color::new(0.0, 0.0, 0.0, 0.35));
+        let lit = self.grab.is_some() || ui.hover(thumb);
+        draw_rectangle(thumb.x + 2.0, thumb.y, thumb.w - 4.0, thumb.h, if lit { rgb8(230, 230, 240) } else { rgb8(160, 160, 175) });
+    }
+
+    /// The mouse handling of `update`, without drawing. Returns where the
+    /// thumb is, or None when there's nothing to scroll.
+    pub fn handle(&mut self, ui: &mut Ui, track: Rect, content: f32, view: f32, scroll: &mut f32) -> Option<Rect> {
+        let max = content - view;
+        if max <= 0.0 {
+            self.grab = None;
+            *scroll = 0.0;
+            return None;
+        }
+        let thumb_h = (track.h * view / content).max(36.0).min(track.h);
+        let travel = track.h - thumb_h;
+        let thumb = Rect::new(track.x, track.y + travel * (*scroll / max).clamp(0.0, 1.0), track.w, thumb_h);
+        match self.grab {
+            Some((y0, s0)) if ui.down => *scroll = s0 + (ui.mouse.y - y0) * max / travel.max(1.0),
+            Some(_) => self.grab = None,
+            None if ui.clicked(thumb) => self.grab = Some((ui.mouse.y, *scroll)),
+            None if ui.clicked(track) => *scroll += if ui.mouse.y < thumb.y { -view } else { view } * 0.8,
+            None => {}
+        }
+        *scroll = scroll.clamp(0.0, max);
+        Some(Rect::new(track.x, track.y + travel * (*scroll / max), track.w, thumb_h))
+    }
+}
+
 pub fn rgb8(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgba(r, g, b, 255)
 }

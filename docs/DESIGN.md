@@ -15,6 +15,7 @@ installing, see the [README](../README.md).
 7. [Curriculum and level design](#curriculum-and-level-design)
    - [World Checks](#world-checks)
 8. [The block editor](#the-block-editor)
+   - [Scrolling](#scrolling)
    - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
@@ -371,6 +372,19 @@ drag blocks inside the program to reorder them).
 - Inline controls (the `x`, `−`/`+`, the condition label) are handled before a
   press can start a drag, and their edits are collected as an `Edit` value and
   applied after drawing, so the tree is never changed while it's being read.
+
+### Scrolling
+
+The blocks palette and the program (MAIN and FUNCTION) both scroll when they
+don't fit, with the mouse wheel or a scrollbar (`ui::Scrollbar`). The
+scrollbar can be dragged, or clicked above or below the thumb to move a page,
+so it works without a wheel too: touch screens, some trackpads. It's 14 pixels
+wide so a finger can grab it, and it only appears when there's something to
+scroll. Rows are never drawn half-hidden. The palette scrolls a whole block at
+a time, and the program skips rows that are partly out of view. RUN, STEP,
+RESET and the speed button have their own panel under the palette, so no block
+can end up behind them. A test checks the two panels never overlap and that
+the biggest palette really needs (and gets) scrolling.
 
 ### Undo and redo
 
