@@ -894,10 +894,91 @@ mod smart_hints {
 
     #[test]
     fn far_from_done_says_which_way_to_go() {
+        // The game has just said the miner isn't in the portal, so Bit starts
+        // with where to go instead of repeating it.
         let (_, h) = hints("Turn the Corner", "F");
-        assert!(h[0].text.contains("isn't standing in the portal"), "{h:?}");
-        assert_eq!(h[1].text, "From where the miner is, the portal is 5 squares away. The way there starts straight AHEAD.");
+        assert_eq!(h[0].text, "From where the miner stops, the portal is 5 squares away. The way there starts straight AHEAD.");
         assert!(h.last().unwrap().text.starts_with("Hint: "), "the level's own hint comes last");
+    }
+
+    #[test]
+    fn an_extra_block_is_removed_not_swapped_for_an_empty_function() {
+        // CALL FUNCTION is in this palette, but the function is empty, so
+        // "change it into CALL FUNCTION" would only be a confusing "delete it".
+        let (p, h) = hints("Lava Maybe", "[R7 [I5 P F ] F ]");
+        assert!(h[1].text.contains("extra"), "{h:?}");
+        assert_eq!(h[2].text, "Remove the outlined block. It doesn't belong there.");
+        assert_eq!(h[2].block, Some(p.main[0].body[0].body[1].id));
+    }
+
+    #[test]
+    fn fixes_never_win_just_because_the_game_stops_at_the_portal() {
+        // Swapping PLACE BLOCK for FORWARD walks 20 squares down a 10-square
+        // hallway; it "wins" only because the game stops at the portal.
+        let (p, h) = hints("The Long Hallway", "[R10 F P ]");
+        assert_eq!(h[2].text, "Remove the outlined block. It doesn't belong there.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].body[1].id));
+        // Two steps are missing after the loop: a third lap would reach the
+        // portal and then walk into the wall, so that's not a fix.
+        let (_, h) = hints("Crossroads", "[R2 F F [E1 L | R ] ]");
+        assert!(h.iter().all(|x| !x.text.contains("REPEAT")), "{h:?}");
+    }
+
+    #[test]
+    fn add_hints_point_next_to_the_outlined_block() {
+        let (_, h) = hints("First Steps", "F F F");
+        assert!(h[1].text.starts_with("Something is missing right AFTER the outlined block"), "{h:?}");
+        let (p, h) = hints("Rocky Stairs", "[R4 M F R M F L ]");
+        assert_eq!(h[2].text, "Add a FORWARD block right AFTER the outlined REPEAT block - below it, not inside it.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].id));
+    }
+
+    #[test]
+    fn winning_programs_with_wasted_steps() {
+        // The fifth FORWARD comes after the win, so it never runs.
+        let (p, h) = hints("First Steps", "F F F F F");
+        assert!(h[0].text.contains("never runs"), "{h:?}");
+        assert_eq!(h[1].block, Some(p.main[4].id));
+        // REPEAT 11 wins on the 10th step; the 11th would hit the wall.
+        let (_, h) = hints("The Long Hallway", "[R11 F ]");
+        assert!(h[0].text.contains("only because the game stops it"), "{h:?}");
+        assert!(h[0].text.contains("REPEAT"), "{h:?}");
+        // Repeated steps in a function level get the FUNCTION tip.
+        let (_, h) = hints("Teach a New Word", "M F M F M F M F F");
+        assert!(h.iter().any(|x| x.text.contains("FUNCTION once")), "{h:?}");
+    }
+
+    #[test]
+    fn checks_are_never_changed_to_repeat_an_outer_check() {
+        // The empty "IF path ahead" sits in the ELSE of "IF path to right", so
+        // changing it to check "path to right" would make it always false.
+        // Any other check would only steer around the empty part, so Bit says
+        // to fill it.
+        let (p, h) = hints("Rubble Maze", "[W7 [E2 R F | [E0 | [E3 M | L ] ] ] ]");
+        assert_eq!(h[2].text, "Add a FORWARD block inside the outlined IF / ELSE block.", "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].body[0].els[0].id));
+        // Checking "path to right" inside "IF path to right" is never offered either.
+        let (_, h) = hints("The Maze", "[W7 [E2 R F | [E0 F R | L ] ] ]");
+        assert!(h.iter().all(|x| !x.text.contains("instead of \"path ahead\"")), "{h:?}");
+    }
+
+    #[test]
+    fn working_programs_skip_the_levels_general_hint() {
+        let (_, h) = hints("The Long Hallway", "[R11 F ]");
+        assert!(h.iter().all(|x| !x.text.starts_with("Hint: ")), "{h:?}");
+    }
+
+    #[test]
+    fn changing_levels_suggest_checking_before_mining() {
+        // A plain MINE would swing at thin air in versions without the stone.
+        let l = level("Maybe a Stone");
+        let p = Program::deserialize("F F F F").unwrap();
+        let seed = (0..500).find(|&s| simulate(&p, World::from_level(l, s)).is_err()).expect("a world with the stone");
+        let h = ladder(l, &p, &World::from_level(l, seed), seed);
+        assert!(h[0].text.contains("IF \"stone ahead\""), "{h:?}");
+        // Already inside "WHILE stone ahead": a plain MINE is the right advice.
+        let (_, h) = hints("Stone Tunnel", "[W3 F ]");
+        assert!(h[0].text.starts_with("The outlined block walks into a block the miner could MINE"), "{h:?}");
     }
 
     #[test]

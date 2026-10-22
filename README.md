@@ -33,10 +33,13 @@ like real software.
   level. Bit tries every single change in the game's own simulator. If one
   change would solve the level (in every version of a changing level), each
   press of *Hint* says a little more: first a nudge, then a yellow outline on
-  the block, then the exact change ("Change the REPEAT from 8 to 10"). If no
-  single change is enough, Bit explains what went wrong and which way the goal
-  is. A long program that already works gets help spotting a pattern for a
-  loop. It all runs on the device, with no network and no AI service.
+  the block, then the exact change ("Change the REPEAT from 8 to 10"). A fix
+  only counts if it wins the way the level means: every block does something,
+  and the program doesn't just get lucky because the game stops at the portal.
+  If no single change is enough, Bit explains what went wrong and which way
+  the goal is. A program that already works gets help with blocks that never
+  run, loops that go round too often, and patterns a loop could shorten. It
+  all runs on the device, with no network and no AI service.
 - **Drag and drop, with undo.** Drag blocks from the palette or rearrange the
   program by dragging. Every change can be undone and redone.
 - **Step-by-step debugging.** *STEP* runs one block at a time, and the running
