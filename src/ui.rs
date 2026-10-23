@@ -340,10 +340,16 @@ fn width_in(face: Face, s: &str, size: f32) -> f32 {
     with_font(face, |font| measure_text(s, font, font_size, font_scale).width)
 }
 
+/// Draws `s` centred in `r`. `\n` starts a new line; the lines are centred together.
 pub fn text_centered(s: &str, r: Rect, size: f32, c: Color, shadow: bool) {
-    let x = r.x + (r.w - text_width(s, size)) / 2.0;
-    let y = r.y + (r.h - size) / 2.0 + 1.0;
-    if shadow { shadow_text(s, x, y, size, c) } else { text(s, x, y, size, c) }
+    let lh = size * 1.1;
+    let lines: Vec<&str> = s.split('\n').collect();
+    let top = r.y + (r.h - size - (lines.len() - 1) as f32 * lh) / 2.0 + 1.0;
+    for (i, line) in lines.iter().enumerate() {
+        let x = r.x + (r.w - text_width(line, size)) / 2.0;
+        let y = top + i as f32 * lh;
+        if shadow { shadow_text(line, x, y, size, c) } else { text(line, x, y, size, c) }
+    }
 }
 
 /// Splits text into lines that fit `width`. `\n` starts a new paragraph.
