@@ -1,6 +1,6 @@
 //! The gameplay screen: the world, the block palette, run controls and popups.
 
-use crate::art::{draw_tex, shade, Art};
+use crate::art::{draw_tex, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
 use crate::hints::{self, Hint};
@@ -144,6 +144,9 @@ pub struct Play {
     palette_bar: Scrollbar,
     /// Where everything goes this frame, for this screen's shape.
     lay: Layout,
+    /// How far the Rust code view is scrolled, and its scrollbar.
+    code_scroll: f32,
+    code_bar: Scrollbar,
     /// The guided tour, while it runs.
     tour: Option<Tour>,
     /// A click the tour kept from reaching the screen, for its own buttons.
@@ -225,6 +228,8 @@ impl Play {
             palette_scroll: 0.0,
             palette_bar: Scrollbar::default(),
             lay: Layout::new(VW, VH, false),
+            code_scroll: 0.0,
+            code_bar: Scrollbar::default(),
             tour,
             tour_click: false,
         };
@@ -244,6 +249,7 @@ impl Play {
         self.program = Program::deserialize(&src).unwrap_or_default();
     }
     pub fn debug_code(&mut self) {
+        self.code_scroll = 0.0;
         self.modal = Modal::Code;
     }
     pub fn debug_run(&mut self, sfx: &Sounds) {
@@ -695,6 +701,7 @@ impl Play {
         let code_label = if lay.shape == Shape::Tall { "Show code" } else { "Show Rust code" };
         if ui.button(lay.code, code_label, rgb8(183, 65, 14), 18.0) {
             sfx.play(Sfx::Click);
+            self.code_scroll = 0.0;
             self.modal = Modal::Code;
         }
         if ui.button(lay.help, "Help", rgb8(60, 140, 90), 18.0) {
@@ -1016,9 +1023,12 @@ impl Play {
             let glow = self.count_flash;
             shadow_text("count", x, y + 10.0, 20.0, rgb8(140, 235, 220));
             let b = Rect::new(x + 66.0, y + 4.0, 46.0, 30.0);
-            draw_rectangle(b.x, b.y, b.w, b.h, Color::new(0.12 + glow * 0.5, 0.63, 0.59, 1.0));
-            draw_rectangle_lines(b.x, b.y, b.w, b.h, 2.0 + glow * 2.0, WHITE);
-            text_centered(&value.to_string(), b, 22.0, WHITE, true);
+            // The box keeps a readable colour; a change flashes its outline yellow.
+            let bg = kind_color(crate::program::Kind::Set);
+            draw_rectangle(b.x, b.y, b.w, b.h, bg);
+            let edge = Color::new(1.0, 1.0 - glow * 0.15, 1.0 - glow * 0.85, 1.0);
+            draw_rectangle_lines(b.x, b.y, b.w, b.h, 2.0 + glow * 2.0, edge);
+            text_centered(&value.to_string(), b, 22.0, text_on(bg), true);
             x += 130.0;
         }
         if let Some(vm) = &self.vm {
@@ -1068,7 +1078,7 @@ impl Play {
             sfx.play(Sfx::Click);
             self.show_hint();
         }
-        if ui.button(self.lay.goal, "Goal", rgb8(90, 90, 110), 18.0) {
+        if ui.button(self.lay.goal, "Goal", rgb8(78, 78, 96), 18.0) {
             sfx.play(Sfx::Click);
             let g = self.goal_text();
             self.say(g, MsgKind::Info);
@@ -1080,7 +1090,7 @@ impl Play {
                 r.x + r.w - 350.0,
                 r.y + r.h - 32.0,
                 15.0,
-                rgb8(140, 140, 155),
+                rgb8(165, 165, 180),
             );
         }
     }
@@ -1120,15 +1130,16 @@ impl Play {
             }
             let c = if full { rgb8(90, 90, 90) } else { kind_color(k) };
             let hover = ui.hover(b) && !full;
-            bevel(b, if hover { shade(c, 1.18) } else { c });
-            block_icon(k, b.x + 6.0, b.y + 10.0, 24.0, art);
-            let dark = luminance(c) > 0.8;
+            let tc = text_on(c);
+            let dark = tc != WHITE;
+            bevel(b, if hover { hover_shade(c, !dark) } else { c });
+            block_icon(k, b.x + 6.0, b.y + 10.0, 24.0, tc, art);
             let label = k.palette_label();
             // Narrow palettes shrink a long label a little to keep it on its block.
             let size = fit_size(label, b.w - 44.0, 20.0, 16.0);
             let ly = b.y + 13.0 + (20.0 - size) / 2.0;
             if dark {
-                text(label, b.x + 38.0, ly, size, rgb8(40, 30, 0));
+                text(label, b.x + 38.0, ly, size, tc);
             } else {
                 shadow_text(label, b.x + 38.0, ly, size, WHITE);
             }
@@ -1183,7 +1194,7 @@ impl Play {
                 panel(r);
                 draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 80.0, 80.0, WHITE);
                 let size = fit_size(title, r.w - 144.0, 32.0, 22.0);
-                shadow_text(title, r.x + 124.0, r.y + 44.0, size, rgb8(255, 230, 90));
+                text(title, r.x + 124.0, r.y + 44.0, size, TITLE_ON_LIGHT);
                 draw_rectangle(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0, rgb8(60, 60, 72));
                 paragraph(body, r.x + 36.0, r.y + 134.0, r.w - 72.0, 21.0, WHITE);
                 // Narrow popups put "Let's go!" on the right, clear of "Show me around".
@@ -1210,7 +1221,7 @@ impl Play {
                 let r = self.lay.popup(840.0, 660.0, 70.0);
                 panel(r);
                 let heading = "Your program, written in Rust";
-                shadow_text(heading, r.x + 24.0, r.y + 18.0, fit_size(heading, r.w - 48.0, 30.0, 20.0), rgb8(255, 160, 90));
+                text(heading, r.x + 24.0, r.y + 18.0, fit_size(heading, r.w - 48.0, 30.0, 20.0), WARN_ON_LIGHT);
                 let said = paragraph(
                     "Real developers type code like this. Every block you snap together matches a line of real Rust!",
                     r.x + 24.0,
@@ -1226,22 +1237,31 @@ impl Play {
                 // Smaller for long programs, and small enough that the widest line fits.
                 let base = if lines.len() > 22 { 16.0 } else { 20.0 };
                 let widest = lines.iter().max_by_key(|l| l.len()).map_or("", |l| l.as_str());
-                let size = fit_size(widest, code.w - 32.0, base, 11.0);
-                let lh = size * 1.25;
-                let max = ((code.h - 20.0) / lh) as usize;
-                for (i, line) in lines.iter().take(max).enumerate() {
+                // Long programs scroll, a line at a time, with the wheel or a scrollbar.
+                let fit = |room: f32| {
+                    let size = fit_size(widest, room, base, 11.0);
+                    let lh = size * 1.25;
+                    let shown = (((code.h - 20.0) / lh).floor() as usize).max(1);
+                    (size, lh, shown, lines.len().saturating_sub(shown))
+                };
+                let (mut size, mut lh, mut shown, mut hidden) = fit(code.w - 32.0);
+                if hidden > 0 {
+                    (size, lh, shown, hidden) = fit(code.w - 32.0 - SCROLLBAR_W - 6.0);
+                }
+                if ui.hover(code) && ui.wheel != 0.0 {
+                    self.code_scroll -= ui.wheel.signum() * lh * 3.0;
+                }
+                let track = Rect::new(code.x + code.w - SCROLLBAR_W - 4.0, code.y + 4.0, SCROLLBAR_W, code.h - 8.0);
+                self.code_bar.update(ui, track, code.h + hidden as f32 * lh, code.h, &mut self.code_scroll);
+                let first = ((self.code_scroll / lh).round() as usize).min(hidden);
+                for (i, line) in lines.iter().skip(first).take(shown).enumerate() {
                     draw_code_line(line, code.x + 16.0, code.y + 12.0 + i as f32 * lh, size);
                 }
-                if lines.len() > max {
-                    text("...", code.x + 16.0, code.y + code.h - 24.0, size, WHITE);
-                }
-                text(
-                    "Fun fact: this whole game is written in Rust too!",
-                    r.x + 24.0,
-                    r.y + r.h - 56.0,
-                    18.0,
-                    rgb8(40, 40, 40),
-                );
+                // Wraps to the left of the Close button on narrow screens.
+                let fun = "Fun fact: this whole game is written in Rust too!";
+                let room = r.w - 48.0 - 170.0;
+                let fun_size = if text_width(fun, 18.0) <= room { 18.0 } else { 16.0 };
+                paragraph(fun, r.x + 24.0, r.y + r.h - if text_width(fun, fun_size) <= room { 56.0 } else { 64.0 }, room, fun_size, rgb8(40, 40, 40));
                 if ui.button(Rect::new(r.x + r.w - 160.0, r.y + r.h - 62.0, 140.0, 44.0), "Close", rgb8(90, 90, 110), 22.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
@@ -1254,7 +1274,7 @@ impl Play {
                 let r = self.lay.popup(680.0, if narrow { 440.0 } else { 380.0 }, 200.0);
                 panel(r);
                 draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 72.0, 72.0, WHITE);
-                shadow_text("So close!", r.x + 116.0, r.y + 40.0, 34.0, rgb8(255, 200, 80));
+                text("So close!", r.x + 116.0, r.y + 40.0, 34.0, WARN_ON_LIGHT);
                 let mut y = r.y + 116.0;
                 y += paragraph(
                     "Your program worked in THIS world. But I tested it in a different version of the level, and this happened:",
@@ -1293,7 +1313,7 @@ impl Play {
                 panel(r);
                 let title = if last { "YOU BEAT THE GAME!" } else { "Level complete!" };
                 let size = fit_size(title, r.w - 40.0, 40.0, 26.0);
-                text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, rgb8(255, 215, 40), true);
+                text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, TITLE_ON_LIGHT, false);
                 for i in 0..3 {
                     let pop = ((get_time() * 3.0 + i as f64).sin() * 2.0) as f32;
                     star(r.x + r.w / 2.0 - 90.0 + i as f32 * 90.0, r.y + 120.0 + pop, 34.0, i < self.stars as usize);

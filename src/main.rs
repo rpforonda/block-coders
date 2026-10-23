@@ -177,8 +177,12 @@ fn select_screen(
         let levels: Vec<usize> = (0..LEVELS.len()).filter(|&i| LEVELS[i].chapter == ci).collect();
         let stars: u32 = levels.iter().map(|&i| progress.stars[i] as u32).sum();
         let chosen = *world == ci;
+        // The chosen world is drawn in its colour, made readable, with text to match.
+        let fill = readable_bg(if chosen { c } else { art::shade(c, 0.5) });
+        let ink = if !open { LOCKED_TEXT } else { text_on(fill) };
+        // Accent colours only where they read: on the dark, unchosen worlds.
+        let accent = |c: Color| if open && !chosen { c } else { ink };
         if open {
-            let fill = if chosen { c } else { art::shade(c, 0.55) };
             if ui.button(r, "", fill, 20.0) && !chosen {
                 sfx.play(Sfx::Click);
                 *world = ci;
@@ -189,13 +193,13 @@ fn select_screen(
         if chosen {
             draw_rectangle_lines(r.x - 5.0, r.y - 5.0, r.w + 10.0, r.h + 10.0, 4.0, rgb8(255, 230, 90));
         }
-        let tc = if open { WHITE } else { rgb8(150, 150, 150) };
-        shadow_text(&format!("World {}", ci + 1), r.x + 16.0, r.y + 10.0, 18.0, tc);
-        shadow_text(ch.name, r.x + 16.0, r.y + 32.0, 28.0, tc);
+        let say = |s: &str, x: f32, y: f32, size: f32, c: Color| if c == DARK_TEXT { text(s, x, y, size, c) } else { shadow_text(s, x, y, size, c) };
+        say(&format!("World {}", ci + 1), r.x + 16.0, r.y + 10.0, 18.0, ink);
+        say(ch.name, r.x + 16.0, r.y + 32.0, 28.0, ink);
         if open {
-            shadow_text(ch.concept, r.x + 16.0, r.y + 64.0, 18.0, rgb8(255, 230, 140));
+            say(ch.concept, r.x + 16.0, r.y + 64.0, 18.0, accent(rgb8(255, 230, 140)));
             star(r.x + r.w - 92.0, r.y + 20.0, 10.0, true);
-            shadow_text(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, rgb8(255, 215, 40));
+            say(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, accent(rgb8(255, 215, 40)));
         } else {
             // Say why: a World Check to pass, or just levels still to beat.
             let why = if ci == CHAPTERS.len() - 1 && progress.check_open(ci - 1) {
@@ -205,7 +209,7 @@ fn select_screen(
             } else {
                 "Locked".to_string()
             };
-            shadow_text(&why, r.x + 16.0, r.y + 64.0, 18.0, rgb8(150, 150, 150));
+            shadow_text(&why, r.x + 16.0, r.y + 64.0, 18.0, LOCKED_TEXT);
         }
     }
 
@@ -221,12 +225,13 @@ fn select_screen(
         let l = &LEVELS[i];
         let b = Rect::new(panel.x + 30.0 + (n % 5) as f32 * 168.0, panel.y + 80.0 + (n / 5) as f32 * 180.0, 148.0, 148.0);
         if progress.unlocked(i) {
-            let c = rgb8(ch.color.0, ch.color.1, ch.color.2);
+            let c = readable_bg(rgb8(ch.color.0, ch.color.1, ch.color.2));
             if ui.button(b, "", c, 20.0) {
                 sfx.play(Sfx::Click);
                 out = Some(SelectOut::Level(i));
             }
-            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 14.0, b.w, 60.0), 56.0, WHITE, true);
+            let ink = text_on(c);
+            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 14.0, b.w, 60.0), 56.0, ink, ink == WHITE);
             for s in 0..3 {
                 star(b.x + 40.0 + s as f32 * 34.0, b.y + 108.0, 14.0, s < progress.stars[i] as usize);
             }
@@ -246,7 +251,7 @@ fn select_screen(
             bevel(b, rgb8(70, 70, 70));
             draw_rectangle_lines(b.x + 56.0, b.y + 30.0, 36.0, 34.0, 6.0, rgb8(150, 150, 150));
             draw_rectangle(b.x + 48.0, b.y + 56.0, 52.0, 44.0, rgb8(150, 150, 150));
-            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0, b.w, 24.0), 22.0, rgb8(180, 180, 180), false);
+            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0, b.w, 24.0), 22.0, LOCKED_TEXT, false);
         }
     }
     // The World Check tile, after the world's last level.
@@ -257,7 +262,7 @@ fn select_screen(
         let open = progress.check_open(*world);
         let passed = progress.checks[*world];
         if open {
-            let fill = if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) };
+            let fill = readable_bg(if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) });
             if ui.button(b, "", fill, 20.0) {
                 sfx.play(Sfx::Click);
                 out = Some(SelectOut::Check(*world));
@@ -265,8 +270,9 @@ fn select_screen(
         } else {
             bevel(b, rgb8(70, 70, 70));
         }
-        // A clipboard with ticks.
-        let ink = if open { WHITE } else { rgb8(150, 150, 150) };
+        // A clipboard with ticks, in the tile's text colour.
+        let fill = readable_bg(if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) });
+        let ink = if open { text_on(fill) } else { LOCKED_TEXT };
         let (cx, cy) = (b.x + b.w / 2.0, b.y + 50.0);
         draw_rectangle_lines(cx - 24.0, cy - 30.0, 48.0, 60.0, 4.0, ink);
         draw_rectangle(cx - 10.0, cy - 36.0, 20.0, 10.0, ink);
@@ -277,7 +283,7 @@ fn select_screen(
             draw_rectangle(cx + 3.0, y - 1.0, 13.0, 3.0, ink);
         }
         let label = if passed { "Passed!" } else { "World Check" };
-        text_centered(label, Rect::new(b.x, b.y + 100.0, b.w, 30.0), 22.0, ink, open);
+        text_centered(label, Rect::new(b.x, b.y + 100.0, b.w, 30.0), 22.0, ink, ink == WHITE);
         if ui.hover(b) {
             check_info = Some(if !open {
                 "World Check: beat every level in this world first.".to_string()

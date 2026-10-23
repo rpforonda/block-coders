@@ -167,7 +167,7 @@ impl UsersScreen {
                     }
                 }
                 panel(r);
-                shadow_text("New player", r.x + 30.0, r.y + 24.0, 38.0, rgb8(255, 215, 40));
+                text("New player", r.x + 30.0, r.y + 24.0, 38.0, TITLE_ON_LIGHT);
                 text(if self.kb.open { "Tap the letters to type your name:" } else { "Type your name:" }, r.x + 32.0, r.y + 86.0, 22.0, rgb8(40, 40, 40));
                 let field = Rect::new(r.x + 30.0, r.y + 116.0, r.w - 60.0, 56.0);
                 draw_rectangle(field.x, field.y, field.w, field.h, rgb8(30, 30, 38));
@@ -202,7 +202,7 @@ impl UsersScreen {
                 let clean = name.trim().to_string();
                 let taken = users.list.iter().any(|u| u.name.eq_ignore_ascii_case(&clean));
                 if taken {
-                    text("Someone already has that name - try another!", r.x + 32.0, r.y + 350.0, 20.0, rgb8(180, 40, 40));
+                    text("Someone already has that name - try another!", r.x + 32.0, r.y + 350.0, 20.0, rgb8(150, 20, 20));
                 }
                 let ok = !clean.is_empty() && !taken;
                 let create = ui.button_if(ok, Rect::new(r.x + r.w - 250.0, r.y + r.h - 80.0, 220.0, 54.0), "Let's play!", rgb8(60, 170, 60), 26.0);
@@ -256,7 +256,7 @@ impl UsersScreen {
                         "Yes, delete",
                     )
                 };
-                shadow_text(&title, r.x + 116.0, r.y + 44.0, 32.0, rgb8(255, 200, 80));
+                text(&title, r.x + 116.0, r.y + 44.0, 32.0, WARN_ON_LIGHT);
                 paragraph(&body, r.x + 30.0, r.y + 120.0, r.w - 60.0, 21.0, rgb8(30, 30, 30));
                 if ui.button(Rect::new(r.x + r.w - 270.0, r.y + r.h - 76.0, 240.0, 50.0), yes, rgb8(190, 50, 50), 22.0) {
                     sfx.play(Sfx::Bonk);

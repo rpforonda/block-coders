@@ -1044,6 +1044,80 @@ mod smart_hints {
         assert!(h[0].text.contains("already solves"));
     }
 
+    /// Randomly broken solutions (blocks added, removed, swapped, numbers
+    /// changed) on every level: Bit always has something to say, and never
+    /// points at a block that isn't there.
+    #[test]
+    fn hints_survive_random_programs() {
+        use crate::program::Kind;
+        use crate::world::Rng;
+        /// Every block list in `list`, as a path of (index, else part?) steps.
+        fn paths(list: &[Node], at: Vec<(usize, bool)>, out: &mut Vec<Vec<(usize, bool)>>) {
+            out.push(at.clone());
+            for (i, n) in list.iter().enumerate() {
+                if n.kind.is_container() {
+                    let mut body = at.clone();
+                    body.push((i, false));
+                    paths(&n.body, body, out);
+                    if n.kind == Kind::IfElse {
+                        let mut els = at.clone();
+                        els.push((i, true));
+                        paths(&n.els, els, out);
+                    }
+                }
+            }
+        }
+        fn list_at<'a>(list: &'a mut Vec<Node>, path: &[(usize, bool)]) -> &'a mut Vec<Node> {
+            match path.split_first() {
+                None => list,
+                Some((&(i, els), rest)) => list_at(if els { &mut list[i].els } else { &mut list[i].body }, rest),
+            }
+        }
+        let mut rng = Rng::new(3);
+        for l in LEVELS {
+            for _ in 0..12 {
+                let mut p = Program::deserialize(l.solution).unwrap();
+                for _ in 0..1 + rng.below(3) {
+                    let mut all = Vec::new();
+                    paths(&p.main, Vec::new(), &mut all);
+                    let list = list_at(&mut p.main, &all[rng.below(all.len())]);
+                    let k = l.palette[rng.below(l.palette.len())];
+                    match rng.below(4) {
+                        0 => list.insert(rng.below(list.len() + 1), Node::new(k, l.conds.first().copied().unwrap_or(crate::program::Cond::PathAhead))),
+                        1 if !list.is_empty() => {
+                            list.remove(rng.below(list.len()));
+                        }
+                        2 if !list.is_empty() => {
+                            let i = rng.below(list.len());
+                            if !list[i].kind.is_container() && !k.is_container() {
+                                list[i].kind = k;
+                            }
+                        }
+                        _ if !list.is_empty() => {
+                            let i = rng.below(list.len());
+                            if let Some((lo, hi)) = list[i].kind.number_range() {
+                                list[i].count = lo + rng.below((hi - lo + 1) as usize) as u32;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if list.iter().any(|n| n.kind == Kind::Call) && p.func.is_empty() {
+                        break;
+                    }
+                }
+                let seed = rng.below(1000) as u64;
+                let start = World::from_level(l, seed);
+                let h = ladder(l, &p, &start, seed);
+                assert!(!h.is_empty() && h.iter().all(|x| !x.text.is_empty()), "{}: no hint for {}", l.name, p.serialize());
+                for hint in &h {
+                    if let Some(b) = hint.block {
+                        assert!(contains(&p.main, b) || contains(&p.func, b), "{}: hint points at a missing block ({})", l.name, p.serialize());
+                    }
+                }
+            }
+        }
+    }
+
     /// Every solution with one simple block taken out is one change from
     /// working, so Bit must always find a fix for it, and every hint must
     /// point at a block that's really in the program.
@@ -1460,6 +1534,86 @@ fn print_layouts() {
                 "{name} running={running} canvas={cw:.0}x{ch:.0} scale={scale:.2} shape={:?} world={:.0}x{:.0} blocks_visible={} program_w={:.0} program_rows={rows} message={:.0}x{:.0}",
                 l.shape, l.world.w, l.world.h, l.palette_list().map_or(0, palette_rows), l.editor.w, l.guide.w - 116.0, l.guide.h - 24.0
             );
+        }
+    }
+}
+
+/// Text must be readable: WCAG AA, 4.5:1, for every button, block and label.
+mod contrast {
+    use crate::editor::kind_color;
+    use crate::levels::CHAPTERS;
+    use crate::program::Kind;
+    use crate::ui::*;
+    use macroquad::color::{Color, WHITE};
+
+    fn rgb(r: u8, g: u8, b: u8) -> Color {
+        rgb8(r, g, b)
+    }
+
+    /// Any colour a button or block could be ends up readable, hovered or not.
+    #[test]
+    fn every_colour_gets_readable_text() {
+        for r in (0..=255).step_by(15) {
+            for g in (0..=255).step_by(15) {
+                for b in (0..=255).step_by(15) {
+                    let bg = readable_bg(rgb(r as u8, g as u8, b as u8));
+                    let ink = text_on(bg);
+                    assert!(contrast(bg, ink) >= 4.5, "{r},{g},{b}: {}", contrast(bg, ink));
+                    let hover = hover_shade(bg, ink == WHITE);
+                    assert!(contrast(hover, ink) >= 4.5, "{r},{g},{b} hovered: {}", contrast(hover, ink));
+                    // Making it readable doesn't change it again.
+                    assert_eq!(readable_bg(bg), bg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_hint_button_and_yellow_blocks_get_dark_text() {
+        // These were white on gold (2.5:1 and 2.1:1).
+        for c in [rgb(200, 160, 40), rgb(225, 175, 40), kind_color(Kind::Repeat), kind_color(Kind::While)] {
+            assert_eq!(text_on(readable_bg(c)), DARK_TEXT);
+            assert!(contrast(readable_bg(c), DARK_TEXT) >= 6.0);
+        }
+    }
+
+    /// Bit's Hint and Goal buttons reach AAA (7:1): they're what a stuck child reaches for.
+    #[test]
+    fn hint_and_goal_reach_aaa() {
+        for c in [rgb(200, 160, 40), rgb(78, 78, 96)] {
+            let bg = readable_bg(c);
+            assert!(contrast(bg, text_on(bg)) >= 7.0, "{c:?}: {}", contrast(bg, text_on(bg)));
+        }
+    }
+
+    #[test]
+    fn every_block_label_reads() {
+        use Kind::*;
+        for k in [Forward, TurnLeft, TurnRight, Mine, Place, Repeat, If, IfElse, While, Call, Set, Add, RepeatCount] {
+            let c = kind_color(k);
+            assert!(contrast(c, text_on(c)) >= 4.5, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn titles_world_tiles_and_locked_text_read() {
+        for c in [TITLE_ON_LIGHT, WARN_ON_LIGHT, DARK_TEXT] {
+            assert!(contrast(c, PANEL) >= 4.5, "{c:?} on the light popups: {}", contrast(c, PANEL));
+        }
+        for bg in [rgb(60, 60, 60), rgb(70, 70, 70)] {
+            assert!(contrast(LOCKED_TEXT, bg) >= 4.5);
+        }
+        for ch in &CHAPTERS {
+            let c = rgb(ch.color.0, ch.color.1, ch.color.2);
+            let chosen = readable_bg(c);
+            assert!(contrast(chosen, text_on(chosen)) >= 4.5, "{}", ch.name);
+            // The World Check's header bar: white on the world's colour, dimmed.
+            assert!(contrast(crate::art::shade(c, 0.55), WHITE) >= 4.5, "{}: World Check header", ch.name);
+            // Unchosen worlds are darker and keep their yellow accents.
+            let dim = readable_bg(crate::art::shade(c, 0.5));
+            for accent in [rgb(255, 230, 140), rgb(255, 215, 40), WHITE] {
+                assert!(contrast(dim, accent) >= 4.5, "{}: accent on the dimmed tile: {}", ch.name, contrast(dim, accent));
+            }
         }
     }
 }

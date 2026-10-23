@@ -249,7 +249,7 @@ pub fn draw(tour: &mut Tour, spot: Option<Rect>, canvas: (f32, f32), ui: &mut Ui
     let b = bubble(spot, bubble_h(wrap(&words, text_w, TEXT_SIZE).len()), canvas);
     panel(b);
     draw_tex(&art.bit, b.x + 16.0, b.y + 16.0, 64.0, 64.0, WHITE);
-    text(&format!("{} of {}", tour.step + 1, STEPS.len()), b.x + 22.0, b.y + 88.0, 15.0, rgb8(90, 90, 100));
+    text(&format!("{} of {}", tour.step + 1, STEPS.len()), b.x + 22.0, b.y + 88.0, 15.0, rgb8(64, 64, 74));
     paragraph(&words, b.x + 96.0, b.y + 18.0, b.w - TEXT_INSET, TEXT_SIZE, rgb8(30, 30, 30));
     let mut out = Out::Stay;
     if tour.current().wait == Wait::Next

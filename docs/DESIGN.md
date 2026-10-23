@@ -484,6 +484,16 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   `Camera2D` plus a letterbox viewport. Any window size, tiling window managers
   and odd aspect ratios all work. Mouse positions are converted back into
   virtual coordinates.
+- **Readable colours (WCAG AA, 4.5:1).** Buttons and blocks don't pick their
+  text colour by eye. `ui::readable_bg` darkens a colour just enough for white
+  text (never below 78% brightness). Colours that would need more, the bright
+  yellows like Hint, World Check, and REPEAT / WHILE, keep their colour and get
+  near-black text instead (`ui::text_on`); block icons follow the label. Hover
+  states move away from the text colour, so hovering never lowers contrast.
+  Titles on the light popups use `TITLE_ON_LIGHT` / `WARN_ON_LIGHT` instead of
+  yellow, and locked items use `LOCKED_TEXT`. Tests check every colour on a
+  grid, every block, every world's tiles and the popup titles. (Before this, the
+  Hint button was white on gold at 2.5:1, and REPEAT blocks at 2.1:1.)
 - **Sharp text when scaled.** `ui::text` renders fonts at the real on-screen
   pixel size (`font_size × scale`, `font_scale = 1/scale`), so text stays
   sharp at any window size. macroquad multiplies by the screen's pixel density

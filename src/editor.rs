@@ -50,15 +50,17 @@ pub struct Cursor {
     pub index: usize,
 }
 
+/// A block's colour, made readable (see `ui::readable_bg`): its label goes
+/// on it in `text_on(kind_color(k))`.
 pub fn kind_color(k: Kind) -> Color {
-    match k {
+    readable_bg(match k {
         Kind::Forward | Kind::TurnLeft | Kind::TurnRight => rgb8(60, 120, 230),
         Kind::Mine | Kind::Place => rgb8(220, 120, 30),
         Kind::Repeat | Kind::While => rgb8(225, 170, 20),
         Kind::If | Kind::IfElse => rgb8(140, 80, 210),
         Kind::Call => rgb8(215, 65, 140),
         Kind::Set | Kind::Add | Kind::RepeatCount => rgb8(30, 160, 150),
-    }
+    })
 }
 
 fn list_ref<'a>(p: &'a Program, path: &LPath) -> Option<&'a Vec<Node>> {
@@ -267,6 +269,12 @@ impl Editor {
     /// Moves a block (and everything inside it) to `target`. A placeholder
     /// marks the target first, so removing the block can't shift the spot.
     fn move_node(&mut self, p: &mut Program, id: u32, target: &Cursor) -> bool {
+        // A block can't go inside itself: taking it out would take the target too.
+        let Some((from, i)) = locate_in(p, id) else { return false };
+        let t = &target.list;
+        if t.tab == from.tab && t.steps.len() > from.steps.len() && t.steps[..from.steps.len()] == from.steps[..] && t.steps[from.steps.len()].0 == i {
+            return false;
+        }
         let Some(list) = list_mut(p, &target.list) else { return false };
         let index = target.index.min(list.len());
         list.insert(index, Node { id: PLACEHOLDER, ..Node::new(Kind::Forward, Cond::PathAhead) });
@@ -474,9 +482,9 @@ impl Editor {
             }
             let rect = Rect::new(x, sy + 2.0, w, ROW_H - 6.0);
             bevel(rect, color);
-            block_icon(node.kind, x + 5.0, sy + 6.0, 22.0, art);
-            let dark_text = luminance(color) > 0.8;
-            let tc = if dark_text { rgb8(40, 30, 0) } else { WHITE };
+            let tc = text_on(color);
+            let dark_text = tc != WHITE;
+            block_icon(node.kind, x + 5.0, sy + 6.0, 22.0, tc, art);
             let label_x = x + 34.0;
             let ty = sy + 9.0;
             let say = |s: &str, x: f32| if dark_text { text(s, x, ty, 18.0, tc) } else { shadow_text(s, x, ty, 18.0, tc) };
@@ -704,9 +712,15 @@ impl Editor {
             };
             let trash = matches!(src, DragSource::Block(_)) && !ui.hover(area);
             let g = Rect::new(ui.mouse.x - 20.0, ui.mouse.y - 15.0, 190.0, 30.0);
-            bevel(g, if trash { rgb8(150, 50, 50) } else { kind_color(kind) });
-            block_icon(kind, g.x + 4.0, g.y + 4.0, 22.0, art);
-            shadow_text(&label, g.x + 32.0, g.y + 7.0, 18.0, WHITE);
+            let bg = if trash { rgb8(150, 50, 50) } else { kind_color(kind) };
+            let tc = text_on(bg);
+            bevel(g, bg);
+            block_icon(kind, g.x + 4.0, g.y + 4.0, 22.0, tc, art);
+            if tc == WHITE {
+                shadow_text(&label, g.x + 32.0, g.y + 7.0, 18.0, tc);
+            } else {
+                text(&label, g.x + 32.0, g.y + 7.0, 18.0, tc);
+            }
             if trash {
                 shadow_text("let go to delete", g.x, g.y + 36.0, 16.0, rgb8(255, 150, 140));
             }
@@ -736,6 +750,84 @@ mod tests {
 
     fn main_at(i: usize) -> Cursor {
         Cursor { list: LPath::root(Tab::Main), index: i }
+    }
+
+    fn all_ids(list: &[Node], out: &mut Vec<u32>) {
+        for n in list {
+            out.push(n.id);
+            all_ids(&n.body, out);
+            all_ids(&n.els, out);
+        }
+    }
+
+    /// Every slot in both tabs, as the editor would offer them.
+    fn all_slots(p: &Program) -> Vec<Cursor> {
+        let mut out = Vec::new();
+        for tab in [Tab::Main, Tab::Func] {
+            let (mut rows, mut slots, mut y) = (Vec::new(), Vec::new(), 0.0);
+            layout(list_ref(p, &LPath::root(tab)).unwrap(), LPath::root(tab), 0, &mut y, &mut rows, &mut slots);
+            out.extend(slots.into_iter().map(|s| s.cur));
+        }
+        out
+    }
+
+    /// Random inserts, moves (including onto slots inside the moved block,
+    /// which the drag code refuses but `move_node` must survive) and deletes
+    /// never lose or duplicate a block, and always leave a program that saves
+    /// and loads the same.
+    #[test]
+    fn random_edits_keep_the_program_whole() {
+        use crate::levels::LEVELS;
+        use crate::world::Rng;
+        let level = LEVELS.iter().find(|l| l.name == "Master Miner").unwrap();
+        let kinds = [Kind::Forward, Kind::Mine, Kind::Repeat, Kind::If, Kind::IfElse, Kind::While, Kind::Call, Kind::Set, Kind::RepeatCount];
+        let mut rng = Rng::new(9);
+        for _ in 0..300 {
+            let mut p = Program::default();
+            let mut e = Editor::new();
+            for _ in 0..40 {
+                let before = p.serialize();
+                let count = p.block_count();
+                let slots = all_slots(&p);
+                let mut ids = Vec::new();
+                all_ids(&p.main, &mut ids);
+                all_ids(&p.func, &mut ids);
+                match rng.below(4) {
+                    0 | 1 => {
+                        let s = slots[rng.below(slots.len())].clone();
+                        e.tab = s.list.tab;
+                        e.cursor = s;
+                        e.insert(&mut p, kinds[rng.below(kinds.len())], level);
+                        assert_eq!(p.block_count(), count + 1);
+                    }
+                    2 if !ids.is_empty() => {
+                        let id = ids[rng.below(ids.len())];
+                        let target = slots[rng.below(slots.len())].clone();
+                        let moved = e.move_node(&mut p, id, &target);
+                        assert_eq!(p.block_count(), count, "a move lost or copied blocks: {before} -> {}", p.serialize());
+                        if !moved {
+                            assert_eq!(p.serialize(), before, "a refused move changed the program");
+                        }
+                    }
+                    _ => {
+                        let s = slots[rng.below(slots.len())].clone();
+                        e.tab = s.list.tab;
+                        e.cursor = s;
+                        e.delete_before_cursor(&mut p);
+                    }
+                }
+                let mut ids = Vec::new();
+                all_ids(&p.main, &mut ids);
+                all_ids(&p.func, &mut ids);
+                let n = ids.len();
+                ids.sort();
+                ids.dedup();
+                assert_eq!(ids.len(), n, "duplicate block ids");
+                assert!(!ids.contains(&PLACEHOLDER), "a placeholder was left behind");
+                let again = Program::deserialize(&p.serialize()).expect("edited program must load");
+                assert_eq!(again.serialize(), p.serialize());
+            }
+        }
     }
 
     #[test]
