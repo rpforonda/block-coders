@@ -166,6 +166,7 @@ fn run(p: &Program, mut w: World) -> Run {
                 // the failing action saw.
                 Outcome::Fail(f) => return Run::Failed(f, id, w),
             },
+            Step::Var(_) => {}
             Step::Done => return Run::Ended(w),
             Step::Error(msg, id) => return Run::Stuck(msg, id),
         }
@@ -235,6 +236,11 @@ fn steps_after_win(p: &Program, mut w: World, ran: &mut HashSet<u32>) -> Option<
                     Outcome::Fail(_) => return None,
                 }
             }
+            Step::Var(id) => {
+                if after.is_none() {
+                    ran.insert(id);
+                }
+            }
             Step::Done => return after,
             Step::Error(..) => return None,
         }
@@ -256,11 +262,13 @@ fn simple_blocks(list: &[Node], out: &mut Vec<u32>) {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Fix {
-    Count { id: u32, from: u32, to: u32 },
+    /// Change the number on a REPEAT, SET COUNT or ADD TO COUNT block.
+    Count { id: u32, kind: Kind, from: u32, to: u32 },
     Swap { id: u32, from: Kind, to: Kind },
     Check { id: u32, kind: Kind, from: Cond, to: Cond },
     Remove { id: u32, kind: Kind },
-    Add { kind: Kind, at: Spot },
+    /// Add a block (`number` is what SET COUNT / ADD TO COUNT should hold).
+    Add { kind: Kind, number: u32, at: Spot },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -369,9 +377,13 @@ fn list_edits(
             if list.get(i).is_some_and(|n| n.kind == k) {
                 continue;
             }
-            let mut l = list.to_vec();
-            l.insert(i, Node::new(k, Cond::PathAhead));
-            out.push((l, Fix::Add { kind: k, at }));
+            for number in new_numbers(k) {
+                let mut node = Node::new(k, Cond::PathAhead);
+                node.count = number;
+                let mut l = list.to_vec();
+                l.insert(i, node);
+                out.push((l, Fix::Add { kind: k, number, at }));
+            }
         }
     }
 
@@ -387,10 +399,10 @@ fn list_edits(
                 with(Node { kind: k, ..n.clone() }, Fix::Swap { id: n.id, from: n.kind, to: k });
             }
         }
-        // Change a REPEAT's number.
-        if n.kind == Kind::Repeat {
-            for c in (1..=n.count.max(9) + 3).filter(|&c| c != n.count) {
-                with(Node { count: c, ..n.clone() }, Fix::Count { id: n.id, from: n.count, to: c });
+        // Change a REPEAT's (or a SET / ADD's) number.
+        if let Some((lo, hi)) = n.kind.number_range() {
+            for c in (lo..=hi.min(n.count.max(9) + 3)).filter(|&c| c != n.count) {
+                with(Node { count: c, ..n.clone() }, Fix::Count { id: n.id, kind: n.kind, from: n.count, to: c });
             }
         }
         // Change what an IF / WHILE checks. Not to something a block around it
@@ -431,9 +443,14 @@ fn list_edits(
 fn fix_ladder(problem: &str, fix: &Fix) -> Vec<Hint> {
     let b = fix.block();
     let nudge = match fix {
-        Fix::Count { from, to, .. } => format!(
+        Fix::Count { kind: Kind::Repeat, from, to, .. } => format!(
             "Your REPEAT block (outlined in yellow) is almost right - it needs to repeat {} times than {from}.",
             if to > from { "MORE" } else { "FEWER" }
+        ),
+        Fix::Count { kind, from, to, .. } => format!(
+            "Your {} block (outlined in yellow) is almost right - its number needs to be {} than {from}.",
+            name(*kind),
+            if to > from { "BIGGER" } else { "SMALLER" }
         ),
         Fix::Swap { from: Kind::TurnLeft, to: Kind::TurnRight, .. } | Fix::Swap { from: Kind::TurnRight, to: Kind::TurnLeft, .. } => {
             "The turn outlined in yellow goes the wrong way. Pretend YOU are the miner: which hand points where you need to go?".to_string()
@@ -467,7 +484,8 @@ fn fix_ladder(problem: &str, fix: &Fix) -> Vec<Hint> {
 
 fn exact(fix: &Fix) -> String {
     match *fix {
-        Fix::Count { from, to, .. } => format!("Change the outlined REPEAT from {from} to {to}."),
+        Fix::Count { kind: Kind::Repeat, from, to, .. } => format!("Change the outlined REPEAT from {from} to {to}."),
+        Fix::Count { kind, from, to, .. } => format!("Change the number in the outlined {} block from {from} to {to}.", name(kind)),
         Fix::Swap { from, to, .. } => format!("Change the outlined {} into {}.", name(from), name(to)),
         Fix::Check { kind, from, to, .. } => format!(
             "Change the outlined {} to check \"{}\" instead of \"{}\".",
@@ -479,8 +497,14 @@ fn exact(fix: &Fix) -> String {
             format!("Remove the outlined {} block (and the blocks inside it).", name(kind))
         }
         Fix::Remove { .. } => "Remove the outlined block. It doesn't belong there.".to_string(),
-        Fix::Add { kind, at } => {
-            let what = format!("Add {} {} block", article(kind), name(kind));
+        Fix::Add { kind, number, at } => {
+            let what = if kind.number_range().is_some() {
+                let mut n = Node::new(kind, Cond::PathAhead);
+                n.count = number;
+                format!("Add a {} block", n.label().to_uppercase())
+            } else {
+                format!("Add {} {} block", article(kind), name(kind))
+            };
             match at {
                 Spot::After(_, k) if k.is_container() => {
                     format!("{what} right AFTER the outlined {} block - below it, not inside it.", name(k))
@@ -492,6 +516,16 @@ fn exact(fix: &Fix) -> String {
                 Spot::EmptyFunction => format!("{what} to your FUNCTION."),
             }
         }
+    }
+}
+
+/// The numbers to try on a new block: every useful SET value, the small ADDs,
+/// or just the block's usual number.
+fn new_numbers(k: Kind) -> Vec<u32> {
+    match k {
+        Kind::Set => (0..=12).collect(),
+        Kind::Add => (1..=3).collect(),
+        _ => vec![Node::new(k, Cond::PathAhead).count],
     }
 }
 

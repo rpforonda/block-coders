@@ -1,6 +1,6 @@
 //! The gameplay screen: the world, the block palette, run controls and popups.
 
-use crate::art::{draw_tex, shade, Art};
+use crate::art::{draw_tex, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
 use crate::hints::{self, Hint};
@@ -12,14 +12,14 @@ use crate::program::{contains, Action, Program, Step, Vm};
 use crate::save::{Progress, Saved};
 use crate::sound::{Sfx, Sounds};
 use crate::ui::*;
+use crate::layout::{Layout, Shape};
+use crate::tour::{self, Facts, Spot, Tour};
 use crate::world::{Dir, Failure, Outcome, Tile, World};
 use macroquad::prelude::*;
 
-const WORLD_AREA: Rect = Rect { x: 16.0, y: 68.0, w: 720.0, h: 480.0 };
-const HUD_Y: f32 = 558.0;
-const GUIDE: Rect = Rect { x: 16.0, y: 604.0, w: 720.0, h: 180.0 };
-const PALETTE: Rect = Rect { x: 752.0, y: 68.0, w: 196.0, h: 716.0 };
-const EDITOR: Rect = Rect { x: 962.0, y: 68.0, w: 302.0, h: 716.0 };
+/// Height of one palette block, and the step from one to the next.
+const BLOCK_H: f32 = 44.0;
+const BLOCK_STEP: f32 = 51.0;
 const SPEEDS: [(&str, f32); 4] = [("Slow", 0.9), ("Normal", 0.5), ("Fast", 0.22), ("Turbo", 0.07)];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -54,6 +54,8 @@ pub enum Nav {
 
 #[derive(PartialEq, Clone, Copy)]
 enum AnimKind {
+    /// A block changed `count`: nothing moves, the count box lights up.
+    Var,
     Move,
     Turn,
     Mine,
@@ -135,6 +137,45 @@ pub struct Play {
     /// (serialized program, seed), and how many have been shown.
     hints: Option<(String, u64, Vec<Hint>)>,
     hints_shown: usize,
+    /// Lights up the count box when a block changes it (1 = just changed).
+    count_flash: f32,
+    /// How far the palette's list of blocks is scrolled, and its scrollbar.
+    palette_scroll: f32,
+    palette_bar: Scrollbar,
+    /// Where everything goes this frame, for this screen's shape.
+    lay: Layout,
+    /// How far the Rust code view is scrolled, and its scrollbar.
+    code_scroll: f32,
+    code_bar: Scrollbar,
+    /// The guided tour, while it runs.
+    tour: Option<Tour>,
+    /// A click the tour kept from reaching the screen, for its own buttons.
+    tour_click: bool,
+}
+
+/// Where palette block `i` is drawn in the palette's `list` when it isn't scrolled.
+pub fn palette_button(list: Rect, i: usize) -> Rect {
+    Rect::new(list.x + 10.0, list.y + 4.0 + i as f32 * BLOCK_STEP, list.w - 20.0, BLOCK_H)
+}
+
+/// How many palette blocks fit in `list` at once.
+pub fn palette_rows(list: Rect) -> usize {
+    ((list.h - 4.0 - BLOCK_H) / BLOCK_STEP).max(0.0) as usize + 1
+}
+
+/// Where each spot the tour points at is on screen.
+pub fn spot_rect(lay: &Layout, spot: Spot) -> Option<Rect> {
+    let span = |a: Rect, b: Rect| a.combine_with(b);
+    Some(match spot {
+        Spot::None => return None,
+        Spot::World => lay.world,
+        Spot::FirstBlock => palette_button(lay.palette_list()?, 0),
+        Spot::Program => lay.editor,
+        Spot::StepReset => span(lay.step, lay.reset),
+        Spot::HintGoal => span(lay.hint, lay.goal),
+        Spot::Help => lay.help,
+        Spot::Run => lay.run,
+    })
 }
 
 fn fresh_seed() -> u64 {
@@ -148,6 +189,9 @@ fn ease(t: f32) -> f32 {
 impl Play {
     pub fn new(idx: usize, saved: Option<Program>, speed: usize, shirt: usize) -> Play {
         let level = &LEVELS[idx];
+        let program = saved.unwrap_or_default();
+        // A first visit to level 1 gets the guided tour instead of the intro.
+        let tour = (idx == 0 && program.is_empty()).then(|| Tour::new(crate::keyboard::is_touch()));
         let seed = fresh_seed();
         let start = World::from_level(level, seed);
         let mut p = Play {
@@ -156,7 +200,7 @@ impl Play {
             seed,
             world: start.clone(),
             start,
-            program: saved.unwrap_or_default(),
+            program,
             editor: Editor::new(),
             state: RunState::Editing,
             vm: None,
@@ -169,7 +213,7 @@ impl Play {
             running_id: None,
             error_id: None,
             speed,
-            modal: if level.intro.is_some() { Modal::Intro } else { Modal::None },
+            modal: if level.intro.is_some() && tour.is_none() { Modal::Intro } else { Modal::None },
             win_timer: None,
             stars: 0,
             shake: 0.0,
@@ -180,6 +224,14 @@ impl Play {
             followed: None,
             hints: None,
             hints_shown: 0,
+            count_flash: 0.0,
+            palette_scroll: 0.0,
+            palette_bar: Scrollbar::default(),
+            lay: Layout::new(VW, VH, false),
+            code_scroll: 0.0,
+            code_bar: Scrollbar::default(),
+            tour,
+            tour_click: false,
         };
         p.reset_run();
         p
@@ -192,14 +244,17 @@ impl Play {
     // Hooks for the screenshot autopilot (see BC_SHOT in main.rs).
     pub fn debug_solve(&mut self) {
         self.modal = Modal::None;
+        self.tour = None;
         let src = crate::dev_env("BC_PROGRAM").unwrap_or_else(|| self.level.solution.to_string());
         self.program = Program::deserialize(&src).unwrap_or_default();
     }
     pub fn debug_code(&mut self) {
+        self.code_scroll = 0.0;
         self.modal = Modal::Code;
     }
     pub fn debug_run(&mut self, sfx: &Sounds) {
         self.modal = Modal::None;
+        self.tour = None;
         self.start(false);
         self.step_once(sfx);
     }
@@ -367,6 +422,24 @@ impl Play {
                 }
                 let _ = failed;
             }
+            Step::Var(id) => {
+                self.running_id = Some(id);
+                self.count_flash = 1.0;
+                sfx.play(Sfx::Click);
+                let w = &self.world;
+                self.anim = Some(Anim {
+                    kind: AnimKind::Var,
+                    t: 0.0,
+                    dur: dur * 0.6,
+                    from: w.pos,
+                    to: w.pos,
+                    from_dir: w.dir,
+                    target: w.front(),
+                    old_tile: w.tile(w.front()),
+                    fired: false,
+                    gem: None,
+                });
+            }
             Step::Done => {
                 self.state = RunState::Done;
                 self.running_id = None;
@@ -429,6 +502,7 @@ impl Play {
 
     fn update(&mut self, dt: f32, sfx: &Sounds, progress: &mut Progress) {
         self.shake = (self.shake - dt).max(0.0);
+        self.count_flash = (self.count_flash - dt * 1.5).max(0.0);
         let mut fire = None;
         if let Some(a) = self.anim.as_mut() {
             a.t += dt;
@@ -534,16 +608,33 @@ impl Play {
         }
     }
 
-    pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &mut Sounds, progress: &mut Progress) -> Nav {
+    /// One frame on a `canvas` (width, height) the size of the screen.
+    pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &mut Sounds, progress: &mut Progress, canvas: (f32, f32)) -> Nav {
         let dt = get_frame_time().min(0.1);
         self.update(dt, sfx, progress);
+        self.lay = Layout::new(canvas.0, canvas.1, self.state != RunState::Editing);
         // Remember the program as it was, so any change this frame can be undone.
         let before = self.program.clone();
         let mut nav = Nav::Stay;
         let modal_open = !matches!(self.modal, Modal::None);
 
+        // During the tour, only the spot it points at can be clicked.
+        let tour_spot = self.tour.as_ref().and_then(|t| spot_rect(&self.lay, t.current().spot));
+        self.tour_click = false;
+        if let Some(t) = &self.tour {
+            if ui.click && !tour::allows(t.current(), tour_spot, ui.mouse) {
+                ui.click = false;
+                self.tour_click = true;
+            }
+            ui.rclick = false;
+        }
+
         // Keyboard shortcuts
-        if !modal_open {
+        if self.tour.is_some() {
+            if is_key_pressed(KeyCode::Escape) {
+                self.tour = None;
+            }
+        } else if !modal_open {
             if is_key_pressed(KeyCode::Enter) {
                 self.press_run(sfx);
             }
@@ -574,33 +665,46 @@ impl Play {
         ui.enabled = !modal_open;
 
         // Background
-        draw_rectangle(0.0, 0.0, VW, VH, rgb8(28, 28, 34));
+        let lay = self.lay.clone();
+        draw_rectangle(0.0, 0.0, lay.w, lay.h, rgb8(28, 28, 34));
 
         // ---- Top bar ----
-        draw_rectangle(0.0, 0.0, VW, 56.0, rgb8(50, 50, 60));
-        draw_rectangle(0.0, 54.0, VW, 2.0, BLACK);
-        if ui.button(Rect::new(14.0, 10.0, 110.0, 36.0), "< Levels", rgb8(110, 110, 120), 20.0) {
+        draw_rectangle(0.0, 0.0, lay.w, lay.top_h, rgb8(50, 50, 60));
+        draw_rectangle(0.0, lay.top_h - 2.0, lay.w, 2.0, BLACK);
+        if ui.button(lay.levels, "< Levels", rgb8(110, 110, 120), 20.0) {
             sfx.play(Sfx::Click);
             nav = Nav::Back;
         }
         let ch = &CHAPTERS[self.level.chapter];
-        shadow_text(&format!("Level {}: {}", self.idx + 1, self.level.name), 142.0, 8.0, 28.0, WHITE);
-        text(
-            &format!("{}  -  learning: {}", ch.name, ch.concept),
-            143.0,
-            36.0,
-            16.0,
-            rgb8(185, 185, 200),
-        );
+        let title = format!("Level {}: {}", self.idx + 1, self.level.name);
+        // The title shrinks (a little) to stop short of the buttons or the stars.
+        let room = match lay.shape {
+            Shape::Wide => lay.code.x - lay.title.x - 16.0,
+            Shape::Tall => lay.w - lay.title.x - 100.0,
+        };
+        let title_size = fit_size(&title, room, lay.title.size, 18.0);
+        shadow_text(&title, lay.title.x, lay.title.y + (lay.title.size - title_size) / 2.0, title_size, WHITE);
+        let sub = lay.subtitle;
+        text(&format!("{}  -  learning: {}", ch.name, ch.concept), sub.x, sub.y, sub.size, rgb8(185, 185, 200));
         let best = progress.stars[self.idx];
-        for i in 0..3 {
-            star(700.0 + i as f32 * 26.0, 28.0, 11.0, i < best);
+        // Stars beside the title when there's room, else after it on the next line.
+        let stars_at = match lay.stars_x {
+            Some(x) if lay.title.x + text_width(&title, title_size) + 16.0 < x => Some((x, 28.0)),
+            Some(_) => None,
+            None => Some((lay.w - 92.0, lay.title.y + 12.0)),
+        };
+        if let Some((sx, sy)) = stars_at {
+            for i in 0..3 {
+                star(sx + i as f32 * 26.0, sy, 11.0, i < best);
+            }
         }
-        if ui.button(Rect::new(800.0, 10.0, 150.0, 36.0), "Show Rust code", rgb8(183, 65, 14), 18.0) {
+        let code_label = if lay.shape == Shape::Tall { "Show code" } else { "Show Rust code" };
+        if ui.button(lay.code, code_label, rgb8(183, 65, 14), 18.0) {
             sfx.play(Sfx::Click);
+            self.code_scroll = 0.0;
             self.modal = Modal::Code;
         }
-        if ui.button(Rect::new(962.0, 10.0, 110.0, 36.0), "Help", rgb8(60, 140, 90), 18.0) {
+        if ui.button(lay.help, "Help", rgb8(60, 140, 90), 18.0) {
             sfx.play(Sfx::Click);
             if self.level.intro.is_some() {
                 self.modal = Modal::Intro;
@@ -609,7 +713,7 @@ impl Play {
             }
         }
         let snd = if sfx.muted { "Sound: off" } else { "Sound: on" };
-        if ui.button(Rect::new(1084.0, 10.0, 180.0, 36.0), snd, rgb8(90, 90, 110), 18.0) {
+        if ui.button(lay.sound, snd, rgb8(90, 90, 110), 18.0) {
             sfx.muted = !sfx.muted;
             sfx.play(Sfx::Click);
         }
@@ -641,7 +745,7 @@ impl Play {
             }
         }
         let history = (!self.undo_stack.is_empty(), !self.redo_stack.is_empty());
-        let out = self.editor.draw(ui, &mut self.program, self.level, EDITOR, self.running_id, self.error_id, art, history);
+        let out = self.editor.draw(ui, &mut self.program, self.level, lay.editor, self.running_id, self.error_id, art, history);
         if out.changed {
             self.program_changed(progress);
             sfx.play(Sfx::Click);
@@ -656,11 +760,12 @@ impl Play {
         // ---- Popups ----
         ui.enabled = true;
         if modal_open {
-            draw_rectangle(0.0, 0.0, VW, VH, Color::new(0.0, 0.0, 0.0, 0.55));
+            draw_rectangle(0.0, 0.0, lay.w, lay.h, Color::new(0.0, 0.0, 0.0, 0.55));
         }
         if let Some(n) = self.draw_modal(ui, art, sfx, progress) {
             nav = n;
         }
+        self.draw_tour(ui, art);
 
         // Record this frame's change (if any) for Undo.
         if !self.restoring && before.serialize() != self.program.serialize() {
@@ -672,6 +777,21 @@ impl Play {
         }
         self.restoring = false;
         nav
+    }
+
+    /// Moves the tour on when the player has done what it asked, and draws it.
+    fn draw_tour(&mut self, ui: &mut Ui, art: &Art) {
+        let facts = Facts { main_blocks: self.program.main.len(), running: self.state != RunState::Editing };
+        let Some(t) = &mut self.tour else { return };
+        let mut out = t.update(&facts);
+        if out == tour::Out::Stay {
+            // The tour's own buttons get the click it held back.
+            ui.click = self.tour_click;
+            out = tour::draw(t, spot_rect(&self.lay, t.current().spot), (self.lay.w, self.lay.h), ui, art);
+        }
+        if out == tour::Out::Done {
+            self.tour = None;
+        }
     }
 
     fn undo(&mut self, progress: &mut Progress, sfx: &Sounds) {
@@ -719,7 +839,7 @@ impl Play {
 
     fn draw_world(&self, art: &Art) {
         let w = &self.world;
-        let area = WORLD_AREA;
+        let area = self.lay.world;
         let ts = (area.w / w.w as f32).min(area.h / w.h as f32).floor().min(72.0);
         let shake = if self.shake > 0.0 { (get_time() * 60.0).sin() as f32 * self.shake * 14.0 } else { 0.0 };
         let ox = area.x + (area.w - ts * w.w as f32) / 2.0 + shake;
@@ -872,27 +992,55 @@ impl Play {
 
     fn draw_hud(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds) {
         let w = &self.world;
-        let y = HUD_Y;
-        dark_panel(Rect::new(16.0, y, 720.0, 38.0));
-        let mut x = 26.0;
+        let hud = self.lay.hud;
+        let y = hud.y;
+        dark_panel(hud);
+        // On narrow screens the backpack is just its picture and number.
+        let compact = hud.w < 640.0;
+        let dice = self.level.is_random().then(|| {
+            let w = if compact { 116.0 } else { 144.0 };
+            Rect::new(hud.x + hud.w - w - 6.0, y + 4.0, w, 30.0)
+        });
+        let mut x = hud.x + 10.0;
         draw_tex(&art.cobble, x, y + 7.0, 24.0, 24.0, WHITE);
-        shadow_text(&format!("Backpack: {}", w.blocks), x + 32.0, y + 10.0, 20.0, WHITE);
-        x += 190.0;
+        let backpack = if compact { w.blocks.to_string() } else { format!("Backpack: {}", w.blocks) };
+        shadow_text(&backpack, x + 32.0, y + 10.0, 20.0, WHITE);
+        x += if compact { 76.0 } else { 190.0 };
+        let gem_step = if compact { 96.0 } else { 110.0 };
         if w.diamonds_total > 0 {
             draw_tex(&art.diamond, x, y + 6.0, 26.0, 26.0, WHITE);
             shadow_text(&format!("{} / {}", w.diamonds, w.diamonds_total), x + 32.0, y + 10.0, 20.0, rgb8(150, 245, 240));
-            x += 110.0;
+            x += gem_step;
         }
         if w.emeralds_total > 0 {
             draw_tex(&art.emerald, x, y + 6.0, 26.0, 26.0, WHITE);
             shadow_text(&format!("{} / {}", w.emeralds, w.emeralds_total), x + 32.0, y + 10.0, 20.0, rgb8(150, 255, 170));
-            x += 110.0;
+            x += gem_step;
+        }
+        // The `count` variable, drawn as a labelled box holding its number.
+        if self.level.palette.iter().any(|k| k.uses_count()) {
+            let value = self.vm.as_ref().map_or(0, |vm| vm.count);
+            let glow = self.count_flash;
+            shadow_text("count", x, y + 10.0, 20.0, rgb8(140, 235, 220));
+            let b = Rect::new(x + 66.0, y + 4.0, 46.0, 30.0);
+            // The box keeps a readable colour; a change flashes its outline yellow.
+            let bg = kind_color(crate::program::Kind::Set);
+            draw_rectangle(b.x, b.y, b.w, b.h, bg);
+            let edge = Color::new(1.0, 1.0 - glow * 0.15, 1.0 - glow * 0.85, 1.0);
+            draw_rectangle_lines(b.x, b.y, b.w, b.h, 2.0 + glow * 2.0, edge);
+            text_centered(&value.to_string(), b, 22.0, text_on(bg), true);
+            x += 130.0;
         }
         if let Some(vm) = &self.vm {
-            shadow_text(&format!("Steps: {}", vm.actions), x, y + 10.0, 20.0, rgb8(220, 220, 220));
+            // Only when there's room before the dice button.
+            let steps = format!("Steps: {}", vm.actions);
+            if x + text_width(&steps, 20.0) < dice.map_or(hud.x + hud.w, |d| d.x) - 8.0 {
+                shadow_text(&steps, x, y + 10.0, 20.0, rgb8(220, 220, 220));
+            }
         }
-        if self.level.is_random() {
-            if ui.button(Rect::new(586.0, y + 4.0, 144.0, 30.0), "[dice] New world", rgb8(70, 130, 180), 18.0) {
+        if let Some(d) = dice {
+            let label = if compact { "New world" } else { "[dice] New world" };
+            if ui.button(d, label, rgb8(70, 130, 180), 18.0) {
                 sfx.play(Sfx::Click);
                 self.new_world(fresh_seed());
             }
@@ -900,11 +1048,17 @@ impl Play {
     }
 
     fn draw_guide(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds) {
-        let r = GUIDE;
+        let r = self.lay.guide;
         dark_panel(r);
         let bob = ((get_time() * 2.0).sin() * 3.0) as f32;
-        draw_tex(&art.bit, r.x + 14.0, r.y + 20.0 + bob, 72.0, 72.0, WHITE);
-        shadow_text("Bit", r.x + 34.0, r.y + 102.0, 20.0, rgb8(120, 230, 220));
+        // Hint and Goal either sit under the message, or (on narrow screens)
+        // under Bit, who then gets smaller and the message gets the full height.
+        let side_buttons = self.lay.hint.x < r.x + 100.0;
+        let bit = if side_buttons { 40.0 } else { (r.h - 50.0).clamp(48.0, 72.0) };
+        draw_tex(&art.bit, r.x + 14.0 + (72.0 - bit) / 2.0, r.y + (if side_buttons { 8.0 } else { 14.0 }) + bob, bit, bit, WHITE);
+        if r.h >= 130.0 && !side_buttons {
+            shadow_text("Bit", r.x + 34.0, r.y + bit + 26.0, 20.0, rgb8(120, 230, 220));
+        }
         let color = match self.msg_kind {
             MsgKind::Info => rgb8(235, 235, 235),
             MsgKind::Error => rgb8(255, 150, 130),
@@ -912,44 +1066,82 @@ impl Play {
         };
         let tx = r.x + 104.0;
         draw_triangle(vec2(tx - 12.0, r.y + 50.0), vec2(tx, r.y + 42.0), vec2(tx, r.y + 58.0), rgb8(60, 60, 72));
-        draw_rectangle(tx, r.y + 12.0, r.w - 116.0, r.h - 62.0, rgb8(60, 60, 72));
-        paragraph(&self.msg, tx + 10.0, r.y + 20.0, r.w - 136.0, 19.0, color);
-        if ui.button(Rect::new(tx, r.y + r.h - 42.0, 110.0, 32.0), "Hint", rgb8(200, 160, 40), 18.0) {
+        let bubble = Rect::new(tx, r.y + 12.0, r.w - 116.0, if side_buttons { r.h - 24.0 } else { r.h - 62.0 });
+        draw_rectangle(bubble.x, bubble.y, bubble.w, bubble.h, rgb8(60, 60, 72));
+        // Long messages in a small box step down a little, but never below 16px.
+        let size = [19.0, 17.5, 16.0]
+            .into_iter()
+            .find(|&s| wrap(&self.msg, bubble.w - 20.0, s).len() as f32 * s * 1.3 <= bubble.h - 12.0)
+            .unwrap_or(16.0);
+        paragraph(&self.msg, tx + 10.0, r.y + 20.0, bubble.w - 20.0, size, color);
+        if ui.button(self.lay.hint, "Hint", rgb8(200, 160, 40), 18.0) {
             sfx.play(Sfx::Click);
             self.show_hint();
         }
-        if ui.button(Rect::new(tx + 122.0, r.y + r.h - 42.0, 110.0, 32.0), "Goal", rgb8(90, 90, 110), 18.0) {
+        if ui.button(self.lay.goal, "Goal", rgb8(78, 78, 96), 18.0) {
             sfx.play(Sfx::Click);
             let g = self.goal_text();
             self.say(g, MsgKind::Info);
         }
-        text(
-            "Drag blocks to move them    Ctrl+Z = undo",
-            r.x + r.w - 350.0,
-            r.y + r.h - 32.0,
-            15.0,
-            rgb8(140, 140, 155),
-        );
+        // Keyboard and mouse tips, where there's room and a keyboard.
+        if r.w >= 600.0 && !crate::keyboard::is_touch() {
+            text(
+                "Drag blocks to move them    Ctrl+Z = undo",
+                r.x + r.w - 350.0,
+                r.y + r.h - 32.0,
+                15.0,
+                rgb8(165, 165, 180),
+            );
+        }
     }
 
     fn draw_palette(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds) {
-        let r = PALETTE;
+        if let (Some(r), Some(list)) = (self.lay.palette, self.lay.palette_list()) {
+            self.draw_blocks(ui, art, sfx, r, list);
+        }
+        self.draw_controls(ui, sfx);
+    }
+
+    /// The palette of blocks to add, in `r`, listed in `list`.
+    fn draw_blocks(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, r: Rect, list: Rect) {
         dark_panel(r);
         shadow_text("BLOCKS", r.x + 12.0, r.y + 9.0, 22.0, WHITE);
         let full = self.level.max_blocks.is_some_and(|m| self.program.block_count() >= m);
-        let mut y = r.y + 42.0;
-        for &k in self.level.palette {
-            let b = Rect::new(r.x + 10.0, y, r.w - 20.0, 44.0);
+        // Scroll the list when it's taller than the panel (wheel or scrollbar).
+        // It moves a whole block at a time, so no block is ever cut in half.
+        let hidden = self.level.palette.len().saturating_sub(palette_rows(list));
+        let overflow = hidden > 0;
+        if ui.hover(list) && ui.wheel != 0.0 {
+            self.palette_scroll -= ui.wheel.signum() * BLOCK_STEP;
+        }
+        let track = Rect::new(list.x + list.w - SCROLLBAR_W - 4.0, list.y, SCROLLBAR_W, list.h);
+        let content = list.h + hidden as f32 * BLOCK_STEP;
+        self.palette_bar.update(ui, track, content, list.h, &mut self.palette_scroll);
+        let first = ((self.palette_scroll / BLOCK_STEP).round() as usize).min(hidden);
+        for (i, &k) in self.level.palette.iter().enumerate() {
+            let mut b = palette_button(list, i);
+            b.y -= first as f32 * BLOCK_STEP;
+            if overflow {
+                b.w -= SCROLLBAR_W + 2.0;
+            }
+            // Only whole blocks are shown, so a hidden one can't be clicked.
+            if b.y < list.y - 1.0 || b.y + b.h > list.y + list.h + 1.0 {
+                continue;
+            }
             let c = if full { rgb8(90, 90, 90) } else { kind_color(k) };
             let hover = ui.hover(b) && !full;
-            bevel(b, if hover { shade(c, 1.18) } else { c });
-            block_icon(k, b.x + 6.0, b.y + 10.0, 24.0, art);
-            let dark = luminance(c) > 0.8;
+            let tc = text_on(c);
+            let dark = tc != WHITE;
+            bevel(b, if hover { hover_shade(c, !dark) } else { c });
+            block_icon(k, b.x + 6.0, b.y + 10.0, 24.0, tc, art);
             let label = k.palette_label();
+            // Narrow palettes shrink a long label a little to keep it on its block.
+            let size = fit_size(label, b.w - 44.0, 20.0, 16.0);
+            let ly = b.y + 13.0 + (20.0 - size) / 2.0;
             if dark {
-                text(label, b.x + 38.0, b.y + 13.0, 20.0, rgb8(40, 30, 0));
+                text(label, b.x + 38.0, ly, size, tc);
             } else {
-                shadow_text(label, b.x + 38.0, b.y + 13.0, 20.0, WHITE);
+                shadow_text(label, b.x + 38.0, ly, size, WHITE);
             }
             if !full && ui.clicked(b) {
                 // Click to add at the cursor, or drag it into place.
@@ -961,11 +1153,13 @@ impl Play {
                 );
                 sfx.play(Sfx::Bonk);
             }
-            y += 51.0;
         }
 
-        // Run controls
-        let cy = r.y + r.h - 146.0;
+    }
+
+    /// RUN, STEP, RESET and speed, in their own panel.
+    fn draw_controls(&mut self, ui: &mut Ui, sfx: &Sounds) {
+        dark_panel(self.lay.controls);
         let run_label = match (self.state, self.stepping) {
             (RunState::Running, false) => "PAUSE",
             (RunState::Running, true) => "RUN >",
@@ -973,19 +1167,18 @@ impl Play {
             _ => "RUN >",
         };
         let run_color = if self.state == RunState::Running && !self.stepping { rgb8(200, 150, 30) } else { rgb8(60, 170, 60) };
-        if ui.button(Rect::new(r.x + 10.0, cy, r.w - 20.0, 50.0), run_label, run_color, 26.0) {
+        if ui.button(self.lay.run, run_label, run_color, 26.0) {
             self.press_run(sfx);
         }
-        let half = (r.w - 30.0) / 2.0;
-        if ui.button(Rect::new(r.x + 10.0, cy + 60.0, half, 36.0), "STEP", rgb8(70, 130, 180), 20.0) {
+        if ui.button(self.lay.step, "STEP", rgb8(70, 130, 180), 20.0) {
             self.press_step(sfx);
         }
-        if ui.button(Rect::new(r.x + 20.0 + half, cy + 60.0, half, 36.0), "RESET", rgb8(150, 70, 60), 20.0) {
+        if ui.button(self.lay.reset, "RESET", rgb8(150, 70, 60), 20.0) {
             sfx.play(Sfx::Click);
             self.reset_run();
         }
         let speed_label = format!("Speed: {}", SPEEDS[self.speed].0);
-        if ui.button(Rect::new(r.x + 10.0, cy + 106.0, r.w - 20.0, 32.0), &speed_label, rgb8(90, 90, 110), 18.0) {
+        if ui.button(self.lay.speed, &speed_label, rgb8(90, 90, 110), 18.0) {
             sfx.play(Sfx::Click);
             self.speed = (self.speed + 1) % SPEEDS.len();
         }
@@ -996,48 +1189,79 @@ impl Play {
             Modal::None => None,
             Modal::Intro => {
                 let (title, body) = self.level.intro.unwrap_or(("", ""));
-                let r = Rect::new(VW / 2.0 - 380.0, 120.0, 760.0, 540.0);
+                let r = self.lay.popup(760.0, 540.0, 120.0);
+                let narrow = r.w < 600.0;
                 panel(r);
                 draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 80.0, 80.0, WHITE);
-                shadow_text(title, r.x + 124.0, r.y + 44.0, 32.0, rgb8(255, 230, 90));
+                let size = fit_size(title, r.w - 144.0, 32.0, 22.0);
+                text(title, r.x + 124.0, r.y + 44.0, size, TITLE_ON_LIGHT);
                 draw_rectangle(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0, rgb8(60, 60, 72));
                 paragraph(body, r.x + 36.0, r.y + 134.0, r.w - 72.0, 21.0, WHITE);
-                if ui.button(Rect::new(r.x + r.w / 2.0 - 110.0, r.y + r.h - 66.0, 220.0, 48.0), "Let's go!", rgb8(60, 170, 60), 26.0) {
+                // Narrow popups put "Let's go!" on the right, clear of "Show me around".
+                let go = if narrow {
+                    Rect::new(r.x + r.w - 204.0, r.y + r.h - 66.0, 180.0, 48.0)
+                } else {
+                    Rect::new(r.x + r.w / 2.0 - 110.0, r.y + r.h - 66.0, 220.0, 48.0)
+                };
+                if ui.button(go, "Let's go!", rgb8(60, 170, 60), 26.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
+                }
+                // Level 1 can replay the guided tour.
+                if self.idx == 0
+                    && ui.button(Rect::new(r.x + 24.0, r.y + r.h - 60.0, 180.0, 36.0), "Show me around", rgb8(70, 130, 180), 18.0)
+                {
+                    sfx.play(Sfx::Click);
+                    self.modal = Modal::None;
+                    self.tour = Some(Tour::new(crate::keyboard::is_touch()));
                 }
                 None
             }
             Modal::Code => {
-                let r = Rect::new(VW / 2.0 - 420.0, 70.0, 840.0, 660.0);
+                let r = self.lay.popup(840.0, 660.0, 70.0);
                 panel(r);
-                shadow_text("Your program, written in Rust", r.x + 24.0, r.y + 18.0, 30.0, rgb8(255, 160, 90));
-                text(
+                let heading = "Your program, written in Rust";
+                text(heading, r.x + 24.0, r.y + 18.0, fit_size(heading, r.w - 48.0, 30.0, 20.0), WARN_ON_LIGHT);
+                let said = paragraph(
                     "Real developers type code like this. Every block you snap together matches a line of real Rust!",
                     r.x + 24.0,
                     r.y + 56.0,
+                    r.w - 48.0,
                     17.0,
                     rgb8(40, 40, 40),
                 );
-                let code = Rect::new(r.x + 20.0, r.y + 84.0, r.w - 40.0, r.h - 160.0);
+                let top = r.y + 62.0 + said;
+                let code = Rect::new(r.x + 20.0, top, r.w - 40.0, r.y + r.h - 76.0 - top);
                 draw_rectangle(code.x, code.y, code.w, code.h, rgb8(30, 30, 38));
                 let lines = self.program.to_rust();
-                let size = if lines.len() > 22 { 16.0 } else { 20.0 };
-                let lh = size * 1.25;
-                let max = ((code.h - 20.0) / lh) as usize;
-                for (i, line) in lines.iter().take(max).enumerate() {
+                // Smaller for long programs, and small enough that the widest line fits.
+                let base = if lines.len() > 22 { 16.0 } else { 20.0 };
+                let widest = lines.iter().max_by_key(|l| l.len()).map_or("", |l| l.as_str());
+                // Long programs scroll, a line at a time, with the wheel or a scrollbar.
+                let fit = |room: f32| {
+                    let size = fit_size(widest, room, base, 11.0);
+                    let lh = size * 1.25;
+                    let shown = (((code.h - 20.0) / lh).floor() as usize).max(1);
+                    (size, lh, shown, lines.len().saturating_sub(shown))
+                };
+                let (mut size, mut lh, mut shown, mut hidden) = fit(code.w - 32.0);
+                if hidden > 0 {
+                    (size, lh, shown, hidden) = fit(code.w - 32.0 - SCROLLBAR_W - 6.0);
+                }
+                if ui.hover(code) && ui.wheel != 0.0 {
+                    self.code_scroll -= ui.wheel.signum() * lh * 3.0;
+                }
+                let track = Rect::new(code.x + code.w - SCROLLBAR_W - 4.0, code.y + 4.0, SCROLLBAR_W, code.h - 8.0);
+                self.code_bar.update(ui, track, code.h + hidden as f32 * lh, code.h, &mut self.code_scroll);
+                let first = ((self.code_scroll / lh).round() as usize).min(hidden);
+                for (i, line) in lines.iter().skip(first).take(shown).enumerate() {
                     draw_code_line(line, code.x + 16.0, code.y + 12.0 + i as f32 * lh, size);
                 }
-                if lines.len() > max {
-                    text("...", code.x + 16.0, code.y + code.h - 24.0, size, WHITE);
-                }
-                text(
-                    "Fun fact: this whole game is written in Rust too!",
-                    r.x + 24.0,
-                    r.y + r.h - 56.0,
-                    18.0,
-                    rgb8(40, 40, 40),
-                );
+                // Wraps to the left of the Close button on narrow screens.
+                let fun = "Fun fact: this whole game is written in Rust too!";
+                let room = r.w - 48.0 - 170.0;
+                let fun_size = if text_width(fun, 18.0) <= room { 18.0 } else { 16.0 };
+                paragraph(fun, r.x + 24.0, r.y + r.h - if text_width(fun, fun_size) <= room { 56.0 } else { 64.0 }, room, fun_size, rgb8(40, 40, 40));
                 if ui.button(Rect::new(r.x + r.w - 160.0, r.y + r.h - 62.0, 140.0, 44.0), "Close", rgb8(90, 90, 110), 22.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
@@ -1046,10 +1270,11 @@ impl Play {
             }
             Modal::OtherWorld(seed, err) => {
                 let (seed, err) = (*seed, err.clone());
-                let r = Rect::new(VW / 2.0 - 340.0, 200.0, 680.0, 380.0);
+                let narrow = self.lay.w < 700.0;
+                let r = self.lay.popup(680.0, if narrow { 440.0 } else { 380.0 }, 200.0);
                 panel(r);
                 draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 72.0, 72.0, WHITE);
-                shadow_text("So close!", r.x + 116.0, r.y + 40.0, 34.0, rgb8(255, 200, 80));
+                text("So close!", r.x + 116.0, r.y + 40.0, 34.0, WARN_ON_LIGHT);
                 let mut y = r.y + 116.0;
                 y += paragraph(
                     "Your program worked in THIS world. But I tested it in a different version of the level, and this happened:",
@@ -1063,7 +1288,8 @@ impl Play {
                 draw_rectangle(r.x + 24.0, y - 6.0, r.w - 48.0, 84.0, rgb8(60, 60, 72));
                 paragraph(&err, r.x + 36.0, y + 2.0, r.w - 72.0, 19.0, rgb8(255, 160, 140));
                 let mut out = None;
-                if ui.button(Rect::new(r.x + 30.0, r.y + r.h - 64.0, 300.0, 46.0), "Show me that world", rgb8(60, 140, 200), 22.0) {
+                let show_w = 300f32.min(r.w - 60.0 - 152.0);
+                if ui.button(Rect::new(r.x + 30.0, r.y + r.h - 64.0, show_w, 46.0), "Show me that world", rgb8(60, 140, 200), 22.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
                     self.new_world(seed);
@@ -1081,10 +1307,13 @@ impl Play {
             }
             Modal::Victory => {
                 let last = self.idx + 1 >= LEVELS.len();
-                let r = Rect::new(VW / 2.0 - 340.0, 130.0, 680.0, 520.0);
+                // Narrow screens stack the buttons in two rows, so the popup is taller.
+                let narrow = self.lay.w < 700.0;
+                let r = self.lay.popup(680.0, if narrow { 600.0 } else { 520.0 }, 130.0);
                 panel(r);
                 let title = if last { "YOU BEAT THE GAME!" } else { "Level complete!" };
-                text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), 40.0, rgb8(255, 215, 40), true);
+                let size = fit_size(title, r.w - 40.0, 40.0, 26.0);
+                text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, TITLE_ON_LIGHT, false);
                 for i in 0..3 {
                     let pop = ((get_time() * 3.0 + i as f64).sin() * 2.0) as f32;
                     star(r.x + r.w / 2.0 - 90.0 + i as f32 * 90.0, r.y + 120.0 + pop, 34.0, i < self.stars as usize);
@@ -1098,8 +1327,7 @@ impl Play {
                 } else {
                     "Perfect! That's as short as it gets.".to_string()
                 };
-                text_centered(&extra, Rect::new(r.x, y, r.w, 22.0), 19.0, rgb8(60, 60, 60), false);
-                y += 40.0;
+                y += centered_paragraph(&extra, r.x + 20.0, y, r.w - 40.0, 19.0, rgb8(60, 60, 60)) + 15.0;
                 draw_rectangle(r.x + 30.0, y, r.w - 60.0, 184.0, rgb8(40, 80, 50));
                 shadow_text("What you learned:", r.x + 46.0, y + 12.0, 20.0, rgb8(160, 255, 170));
                 let ch = self.level.chapter;
@@ -1120,7 +1348,13 @@ impl Play {
                 let ch = self.level.chapter;
                 let world_end = !last && LEVELS[self.idx + 1].chapter != ch;
                 let take_check = world_end && ch < CHECKS && !progress.checks[ch];
-                let next_r = Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0);
+                // Wide: [Try again] [Levels] ... [Next]. Narrow: [Next] on its own row above.
+                let half = (r.w - 80.0) / 2.0;
+                let next_r = if narrow {
+                    Rect::new(r.x + 30.0, by - 60.0, r.w - 60.0, 48.0)
+                } else {
+                    Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0)
+                };
                 if take_check {
                     if ui.button(next_r, "World Check >", rgb8(225, 175, 40), 24.0) {
                         sfx.play(Sfx::Click);
@@ -1130,13 +1364,18 @@ impl Play {
                     sfx.play(Sfx::Click);
                     out = Some(Nav::Goto(self.idx + 1));
                 }
-                if ui.button(Rect::new(r.x + 30.0, by, 160.0, 48.0), "Try again", rgb8(70, 130, 180), 22.0) {
+                let try_r = if narrow { Rect::new(r.x + 30.0, by, half, 48.0) } else { Rect::new(r.x + 30.0, by, 160.0, 48.0) };
+                if ui.button(try_r, "Try again", rgb8(70, 130, 180), 22.0) {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
                     self.reset_run();
                 }
-                let lx = if last { r.x + r.w - 190.0 } else { r.x + 210.0 };
-                if ui.button(Rect::new(lx, by, 160.0, 48.0), "Levels", rgb8(110, 110, 120), 22.0) {
+                let levels_r = if narrow {
+                    Rect::new(r.x + 50.0 + half, by, half, 48.0)
+                } else {
+                    Rect::new(if last { r.x + r.w - 190.0 } else { r.x + 210.0 }, by, 160.0, 48.0)
+                };
+                if ui.button(levels_r, "Levels", rgb8(110, 110, 120), 22.0) {
                     sfx.play(Sfx::Click);
                     out = Some(Nav::Back);
                 }

@@ -48,7 +48,17 @@ fn has_touch_screen() -> bool {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+/// In a browser, ask whether the main pointer is a finger (web/storage.js).
+#[cfg(target_arch = "wasm32")]
+fn has_touch_screen() -> bool {
+    unsafe extern "C" {
+        fn bc_touch_screen() -> i32;
+    }
+    // SAFETY: takes no arguments and returns a plain number.
+    unsafe { bc_touch_screen() == 1 }
+}
+
+#[cfg(not(any(target_os = "linux", target_arch = "wasm32")))]
 fn has_touch_screen() -> bool {
     false
 }

@@ -67,13 +67,21 @@
         } catch (e) { /* nothing to do */ }
     }
 
+    // Whether the main pointer is a finger (phones, tablets), so the game can
+    // say "tap" instead of "click" before the first touch. Reads only the
+    // browser's pointer type: nothing about the player.
+    function touchScreen() {
+        try { return window.matchMedia("(pointer: coarse)").matches ? 1 : 0; } catch (e) { return 0; }
+    }
+
     miniquad_add_plugin({
         name: "bc_storage",
-        version: 1,
+        version: 2,
         register_plugin: function (importObject) {
             importObject.env.bc_storage_get = get;
             importObject.env.bc_storage_set = set;
             importObject.env.bc_storage_remove = remove;
+            importObject.env.bc_touch_screen = touchScreen;
         },
     });
 })();

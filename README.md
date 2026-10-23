@@ -3,7 +3,7 @@
 **A blocky, Minecraft-style coding adventure that teaches kids (ages ~8–12) to
 think like programmers.** It's written in Rust.
 
-Kids snap together code blocks to guide a miner through 60 levels. They dig
+Kids snap together code blocks to guide a miner through 66 levels. They dig
 tunnels, collect diamonds, bridge lava and find their way to the portal. Each
 world introduces one big programming idea. As they go, the game shows them that
 their blocks are real code.
@@ -19,16 +19,23 @@ their blocks are real code.
 | 3. Function Forest | 21–28 | **Functions** | Write a set of steps once, then call it anywhere |
 | 4. Decision Desert 🎲 | 29–42 | **If / Else** | Look at the world, then decide what to do |
 | 5. The Deep Dark 🎲 | 43–54 | **While loops & algorithms** | Roads of unknown length, and solving mazes with the right-hand rule |
-| 6. Nether Fortress 🎲 | 55–60 | **Master challenges** | Everything combined |
+| 6. Counting Caverns 🎲 | 55–60 | **Variables** | A box called `count` that holds a number: set it, add to it, and repeat that many times |
+| 7. Nether Fortress 🎲 | 61–66 | **Master challenges** | Everything combined |
 
-Every world starts gently and gets harder. 🎲 marks the **dynamic levels** (32 of
-the 60). Their layout changes every time you press RUN, so a memorized path
+Every world starts gently and gets harder. 🎲 marks the **dynamic levels** (34 of
+the 66). Their layout changes every time you press RUN, so a memorized path
 won't work. The program has to look at the world and decide what to do, just
 like real software.
 
 ## Features
 
 - **Bit, a friendly robot guide**, explains each new idea when it first appears.
+- **A guided tour for first-timers.** The first time a player opens level 1,
+  Bit walks them round the screen one thing at a time: what clicking (or
+  tapping) is, the world, blocks, the program, RUN, STEP, Hint and Help.
+  Everything except the spot Bit points at is dimmed and can't be clicked, so
+  nobody gets lost. *Skip tour* ends it, and level 1's Help can show it again.
+  Nothing about the tour is saved.
 - **Smart hints.** *Hint* looks at the kid's actual program, not just the
   level. Bit tries every single change in the game's own simulator. If one
   change would solve the level (in every version of a changing level), each
@@ -56,12 +63,20 @@ like real software.
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each
   check asks at most 2 of the hardest "which program works every time?"
-  questions. The Nether Fortress opens once all five checks are passed.
+  questions. The Nether Fortress opens once all six checks are passed.
+- **A variable you can watch.** In the Counting Caverns, the `count` variable
+  is drawn as a box under the world. It lights up and shows its new number
+  every time a block changes it, so kids can see a value change as the program
+  runs.
 - **Stars for short programs.** Three stars means you matched the shortest
   solution, which rewards using loops and functions well.
 - **Up to 6 players.** Each player has their own name, a miner with their own
   shirt color, and their own saved progress. Any player can *start over* from
   level 1.
+- **Readable on phones.** On a small screen the play screen reshapes instead
+  of shrinking: stacked when a phone is upright (world, Bit, then blocks and
+  program side by side, with RUN along the bottom), and in columns when it's
+  sideways. The other screens are still being adapted.
 - **Works on touch screens.** On a computer with a touch screen, an on-screen
   keyboard pops up for typing player names. Anyone can open it with the
   keyboard button in the name box.
@@ -120,7 +135,7 @@ resized and the game scales to fit.
 | Move the cursor | Click between blocks in your program |
 | Delete a block | Drag it out of the program, click its **x**, or right-click it. **Backspace** deletes the block above the cursor. |
 | Undo / redo | **Undo** and **Redo** buttons, or **Ctrl+Z** / **Ctrl+Y** |
-| Change a repeat count | Click **−** / **+** on the block |
+| Change a number (repeat, set count, add to count) | Click **−** / **+** on the block |
 | Change what an if/while checks | Click the white label on the block |
 | Run / step / reset | **RUN** (or **Enter**), **STEP**, **RESET** |
 | Try another version of a 🎲 level | Click **[dice] New world** |
@@ -140,11 +155,12 @@ resized and the game scales to fit.
 
 | Path | What's there |
 |---|---|
-| `src/levels.rs` | All 60 levels as small text maps, with hints and lessons |
+| `src/levels.rs` | All 66 levels as small text maps, with hints and lessons |
 | `src/world.rs` | The game rules: tiles, the miner, what each action does |
 | `src/program.rs` | Code blocks, a tiny compiler, and the virtual machine that runs them |
 | `src/editor.rs` | The block editor |
 | `src/play.rs` | The gameplay screen: animation, run controls, popups |
+| `src/tour.rs` | The guided tour on level 1 |
 | `src/main.rs`, `src/users.rs` | Title, player select and level select screens |
 | `src/save.rs` | Players and saved progress |
 | `src/art.rs`, `src/sound.rs` | Pixel art and sound effects, generated by code |

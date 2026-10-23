@@ -5,12 +5,14 @@ mod check;
 mod editor;
 mod hints;
 mod keyboard;
+mod layout;
 mod levels;
 mod play;
 mod program;
 mod questions;
 mod save;
 mod sound;
+mod tour;
 mod ui;
 mod users;
 mod world;
@@ -28,11 +30,22 @@ use ui::*;
 use users::{UsersOut, UsersScreen};
 use world::{Dir, Floor};
 
+/// The window size: the desktop canvas, or BC_WINDOW's size in debug builds.
+fn dev_window() -> (i32, i32) {
+    dev_env("BC_WINDOW")
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((VW as i32, VH as i32))
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "Block Coders".to_string(),
-        window_width: VW as i32,
-        window_height: VH as i32,
+        // BC_WINDOW=390x844 (developer setting) opens a phone-sized window.
+        window_width: dev_window().0,
+        window_height: dev_window().1,
         window_resizable: true,
         // Render at the device's real pixel density in browsers, so phones and
         // tablets (2-3x screens) get sharp text instead of an upscaled blur.
@@ -158,14 +171,18 @@ fn select_screen(
     // Worlds down the left side.
     let first_of = |ci: usize| LEVELS.iter().position(|l| l.chapter == ci).unwrap_or(0);
     for (ci, ch) in CHAPTERS.iter().enumerate() {
-        let r = Rect::new(20.0, 84.0 + ci as f32 * 112.0, 330.0, 100.0);
+        let r = Rect::new(20.0, 80.0 + ci as f32 * 101.0, 330.0, 92.0);
         let c = rgb8(ch.color.0, ch.color.1, ch.color.2);
         let open = progress.unlocked(first_of(ci));
         let levels: Vec<usize> = (0..LEVELS.len()).filter(|&i| LEVELS[i].chapter == ci).collect();
         let stars: u32 = levels.iter().map(|&i| progress.stars[i] as u32).sum();
         let chosen = *world == ci;
+        // The chosen world is drawn in its colour, made readable, with text to match.
+        let fill = readable_bg(if chosen { c } else { art::shade(c, 0.5) });
+        let ink = if !open { LOCKED_TEXT } else { text_on(fill) };
+        // Accent colours only where they read: on the dark, unchosen worlds.
+        let accent = |c: Color| if open && !chosen { c } else { ink };
         if open {
-            let fill = if chosen { c } else { art::shade(c, 0.55) };
             if ui.button(r, "", fill, 20.0) && !chosen {
                 sfx.play(Sfx::Click);
                 *world = ci;
@@ -176,13 +193,13 @@ fn select_screen(
         if chosen {
             draw_rectangle_lines(r.x - 5.0, r.y - 5.0, r.w + 10.0, r.h + 10.0, 4.0, rgb8(255, 230, 90));
         }
-        let tc = if open { WHITE } else { rgb8(150, 150, 150) };
-        shadow_text(&format!("World {}", ci + 1), r.x + 16.0, r.y + 10.0, 18.0, tc);
-        shadow_text(ch.name, r.x + 16.0, r.y + 32.0, 28.0, tc);
+        let say = |s: &str, x: f32, y: f32, size: f32, c: Color| if c == DARK_TEXT { text(s, x, y, size, c) } else { shadow_text(s, x, y, size, c) };
+        say(&format!("World {}", ci + 1), r.x + 16.0, r.y + 10.0, 18.0, ink);
+        say(ch.name, r.x + 16.0, r.y + 32.0, 28.0, ink);
         if open {
-            shadow_text(ch.concept, r.x + 16.0, r.y + 68.0, 18.0, rgb8(255, 230, 140));
+            say(ch.concept, r.x + 16.0, r.y + 64.0, 18.0, accent(rgb8(255, 230, 140)));
             star(r.x + r.w - 92.0, r.y + 20.0, 10.0, true);
-            shadow_text(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, rgb8(255, 215, 40));
+            say(&format!("{stars}/{}", levels.len() * 3), r.x + r.w - 78.0, r.y + 11.0, 18.0, accent(rgb8(255, 215, 40)));
         } else {
             // Say why: a World Check to pass, or just levels still to beat.
             let why = if ci == CHAPTERS.len() - 1 && progress.check_open(ci - 1) {
@@ -192,7 +209,7 @@ fn select_screen(
             } else {
                 "Locked".to_string()
             };
-            shadow_text(&why, r.x + 16.0, r.y + 68.0, 18.0, rgb8(150, 150, 150));
+            shadow_text(&why, r.x + 16.0, r.y + 64.0, 18.0, LOCKED_TEXT);
         }
     }
 
@@ -208,12 +225,13 @@ fn select_screen(
         let l = &LEVELS[i];
         let b = Rect::new(panel.x + 30.0 + (n % 5) as f32 * 168.0, panel.y + 80.0 + (n / 5) as f32 * 180.0, 148.0, 148.0);
         if progress.unlocked(i) {
-            let c = rgb8(ch.color.0, ch.color.1, ch.color.2);
+            let c = readable_bg(rgb8(ch.color.0, ch.color.1, ch.color.2));
             if ui.button(b, "", c, 20.0) {
                 sfx.play(Sfx::Click);
                 out = Some(SelectOut::Level(i));
             }
-            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 14.0, b.w, 60.0), 56.0, WHITE, true);
+            let ink = text_on(c);
+            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 14.0, b.w, 60.0), 56.0, ink, ink == WHITE);
             for s in 0..3 {
                 star(b.x + 40.0 + s as f32 * 34.0, b.y + 108.0, 14.0, s < progress.stars[i] as usize);
             }
@@ -233,7 +251,7 @@ fn select_screen(
             bevel(b, rgb8(70, 70, 70));
             draw_rectangle_lines(b.x + 56.0, b.y + 30.0, 36.0, 34.0, 6.0, rgb8(150, 150, 150));
             draw_rectangle(b.x + 48.0, b.y + 56.0, 52.0, 44.0, rgb8(150, 150, 150));
-            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0, b.w, 24.0), 22.0, rgb8(180, 180, 180), false);
+            text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0, b.w, 24.0), 22.0, LOCKED_TEXT, false);
         }
     }
     // The World Check tile, after the world's last level.
@@ -244,7 +262,7 @@ fn select_screen(
         let open = progress.check_open(*world);
         let passed = progress.checks[*world];
         if open {
-            let fill = if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) };
+            let fill = readable_bg(if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) });
             if ui.button(b, "", fill, 20.0) {
                 sfx.play(Sfx::Click);
                 out = Some(SelectOut::Check(*world));
@@ -252,8 +270,9 @@ fn select_screen(
         } else {
             bevel(b, rgb8(70, 70, 70));
         }
-        // A clipboard with ticks.
-        let ink = if open { WHITE } else { rgb8(150, 150, 150) };
+        // A clipboard with ticks, in the tile's text colour.
+        let fill = readable_bg(if passed { rgb8(60, 150, 70) } else { rgb8(225, 175, 40) });
+        let ink = if open { text_on(fill) } else { LOCKED_TEXT };
         let (cx, cy) = (b.x + b.w / 2.0, b.y + 50.0);
         draw_rectangle_lines(cx - 24.0, cy - 30.0, 48.0, 60.0, 4.0, ink);
         draw_rectangle(cx - 10.0, cy - 36.0, 20.0, 10.0, ink);
@@ -264,7 +283,7 @@ fn select_screen(
             draw_rectangle(cx + 3.0, y - 1.0, 13.0, 3.0, ink);
         }
         let label = if passed { "Passed!" } else { "World Check" };
-        text_centered(label, Rect::new(b.x, b.y + 100.0, b.w, 30.0), 22.0, ink, open);
+        text_centered(label, Rect::new(b.x, b.y + 100.0, b.w, 30.0), 22.0, ink, ink == WHITE);
         if ui.hover(b) {
             check_info = Some(if !open {
                 "World Check: beat every level in this world first.".to_string()
@@ -361,8 +380,13 @@ async fn run() {
 
     loop {
         let (sw, sh) = (screen_width(), screen_height());
-        let scale = (sw / VW).min(sh / VH);
-        let (vw, vh) = (VW * scale, VH * scale);
+        // The play screen reshapes for small screens (see layout.rs); the
+        // other screens are still drawn at 1280x800 and scaled to fit.
+        let (cw, ch, scale) = match &screen {
+            Screen::Play(_) => layout::canvas(sw, sh),
+            _ => (VW, VH, (sw / VW).min(sh / VH)),
+        };
+        let (vw, vh) = (cw * scale, ch * scale);
         let (ox, oy) = ((sw - vw) / 2.0, (sh - vh) / 2.0);
         // screen_width() and mouse_position() are in logical pixels, but the
         // viewport works in physical pixels (2-3x on phones with high_dpi). dpi
@@ -374,8 +398,8 @@ async fn run() {
         set_default_camera();
         clear_background(BLACK);
         set_camera(&Camera2D {
-            target: vec2(VW / 2.0, VH / 2.0),
-            zoom: vec2(2.0 / VW, 2.0 / VH),
+            target: vec2(cw / 2.0, ch / 2.0),
+            zoom: vec2(2.0 / cw, 2.0 / ch),
             viewport: Some(((ox * dpi) as i32, (oy * dpi) as i32, (vw * dpi) as i32, (vh * dpi) as i32)),
             ..Default::default()
         });
@@ -442,7 +466,7 @@ async fn run() {
                     None => {}
                 }
             }
-            Screen::Play(p) => match p.frame(&mut ui, &art, &mut sfx, &mut progress) {
+            Screen::Play(p) => match p.frame(&mut ui, &art, &mut sfx, &mut progress, (cw, ch)) {
                 Nav::Stay => {}
                 Nav::Back => {
                     speed = p.speed();
@@ -519,7 +543,8 @@ async fn run() {
                 45 => {
                     shot("3-intro");
                     match &mut screen {
-                        Screen::Play(p) => p.debug_solve(),
+                        // BC_TOUR=1 keeps level 1's guided tour up for BC_INPUT to click through.
+                        Screen::Play(p) if dev_env("BC_TOUR").is_none() => p.debug_solve(),
                         // A World Check has nothing else to show unless BC_INPUT drives it.
                         Screen::Check(_) if input_script.is_empty() => break,
                         _ => {}

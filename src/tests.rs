@@ -9,7 +9,7 @@ fn level(name: &str) -> &'static crate::levels::Level {
 
 #[test]
 fn level_list_is_sane() {
-    assert_eq!(LEVELS.len(), 60);
+    assert_eq!(LEVELS.len(), 66);
     let mut names: Vec<&str> = LEVELS.iter().map(|l| l.name).collect();
     assert!(names.iter().all(|n| !n.contains(';') && !n.is_empty()));
     names.sort();
@@ -79,6 +79,7 @@ fn dynamic_levels_cannot_be_hardcoded() {
                         break;
                     }
                 }
+                Step::Var(_) => {}
                 _ => panic!("{}: solution didn't win seed 7", l.name),
             }
         }
@@ -156,6 +157,9 @@ fn shortcuts_fail_somewhere() {
         ("The Maze", "[W7 [E0 F | [E1 L | R ] ] ]"),    // road-following can't solve the maze
         ("Bigger Maze", "[W7 [E0 F | [E1 L | R ] ] ]"),
         ("Lava Bridges", "C C R C / [W5 P F ] [R3 F ]"), // fixed walking distance
+        ("Echo Hall", "[W0 F ] R [W0 F ] L [W0 F ]"),       // walks to the walls instead of counting
+        ("Echo Hall", "[W0 F ] R [R3 F ] L [R6 F ] F"),     // a fixed distance
+        ("Stone Counter", "[W3 M F ] R [W0 F ] L [W0 F ]"),
     ];
     for (name, src) in cases {
         let l = level(name);
@@ -643,6 +647,13 @@ mod world_checks {
                     assert_eq!(t[0], n.to_string(), "{}: the count is {n}", q.id);
                     assert!(t[1..].iter().all(|x| *x != n.to_string()), "{}: a wrong choice is also {n}", q.id);
                 }
+                Proof::Variable => {
+                    let r = the_program(q);
+                    assert!(matches!(r.end, End::Wins | End::Unfinished), "{}: program fails with {:?}", q.id, r.end);
+                    let t = texts(q);
+                    assert_eq!(t[0], r.count.to_string(), "{}: count ends at {}", q.id, r.count);
+                    assert!(t[1..].iter().all(|x| *x != r.count.to_string()), "{}: a wrong choice is also {}", q.id, r.count);
+                }
                 Proof::Backpack => {
                     let r = the_program(q);
                     assert_eq!(texts(q)[0], r.world.blocks.to_string(), "{}: backpack ends with {}", q.id, r.world.blocks);
@@ -746,12 +757,27 @@ mod world_checks {
         done.stars.iter_mut().for_each(|s| *s = 3);
         assert!(done.unlocked(last_of(master - 1)), "earlier worlds stay open");
         assert!(!done.unlocked(first_of(master)));
-        for c in 0..CHECKS - 1 {
+        for c in 1..CHECKS {
             done.checks[c] = true;
         }
         assert!(!done.unlocked(first_of(master)), "one check still missing");
-        done.checks[CHECKS - 1] = true;
+        done.checks[0] = true;
         assert!(done.unlocked(first_of(master)) && done.unlocked(last_of(master)));
+
+        // Players already in the Nether Fortress before the Counting Caverns
+        // world (and its check) were added keep it...
+        done.checks[CHECKS - 1] = false;
+        assert!(done.unlocked(first_of(master)), "an old save that had reached the last world keeps it");
+        // ...but a player who hasn't got there yet needs the new check too.
+        let mut new = Progress::new(None);
+        for i in 0..first_of(master) {
+            new.stars[i] = 3;
+        }
+        new.checks.iter_mut().for_each(|c| *c = true);
+        new.checks[CHECKS - 1] = false;
+        assert!(!new.unlocked(first_of(master)));
+        new.checks[CHECKS - 1] = true;
+        assert!(new.unlocked(first_of(master)));
 
         // Parent mode (Ctrl+U) opens everything.
         let mut parent = Progress::new(None);
@@ -1018,6 +1044,80 @@ mod smart_hints {
         assert!(h[0].text.contains("already solves"));
     }
 
+    /// Randomly broken solutions (blocks added, removed, swapped, numbers
+    /// changed) on every level: Bit always has something to say, and never
+    /// points at a block that isn't there.
+    #[test]
+    fn hints_survive_random_programs() {
+        use crate::program::Kind;
+        use crate::world::Rng;
+        /// Every block list in `list`, as a path of (index, else part?) steps.
+        fn paths(list: &[Node], at: Vec<(usize, bool)>, out: &mut Vec<Vec<(usize, bool)>>) {
+            out.push(at.clone());
+            for (i, n) in list.iter().enumerate() {
+                if n.kind.is_container() {
+                    let mut body = at.clone();
+                    body.push((i, false));
+                    paths(&n.body, body, out);
+                    if n.kind == Kind::IfElse {
+                        let mut els = at.clone();
+                        els.push((i, true));
+                        paths(&n.els, els, out);
+                    }
+                }
+            }
+        }
+        fn list_at<'a>(list: &'a mut Vec<Node>, path: &[(usize, bool)]) -> &'a mut Vec<Node> {
+            match path.split_first() {
+                None => list,
+                Some((&(i, els), rest)) => list_at(if els { &mut list[i].els } else { &mut list[i].body }, rest),
+            }
+        }
+        let mut rng = Rng::new(3);
+        for l in LEVELS {
+            for _ in 0..12 {
+                let mut p = Program::deserialize(l.solution).unwrap();
+                for _ in 0..1 + rng.below(3) {
+                    let mut all = Vec::new();
+                    paths(&p.main, Vec::new(), &mut all);
+                    let list = list_at(&mut p.main, &all[rng.below(all.len())]);
+                    let k = l.palette[rng.below(l.palette.len())];
+                    match rng.below(4) {
+                        0 => list.insert(rng.below(list.len() + 1), Node::new(k, l.conds.first().copied().unwrap_or(crate::program::Cond::PathAhead))),
+                        1 if !list.is_empty() => {
+                            list.remove(rng.below(list.len()));
+                        }
+                        2 if !list.is_empty() => {
+                            let i = rng.below(list.len());
+                            if !list[i].kind.is_container() && !k.is_container() {
+                                list[i].kind = k;
+                            }
+                        }
+                        _ if !list.is_empty() => {
+                            let i = rng.below(list.len());
+                            if let Some((lo, hi)) = list[i].kind.number_range() {
+                                list[i].count = lo + rng.below((hi - lo + 1) as usize) as u32;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if list.iter().any(|n| n.kind == Kind::Call) && p.func.is_empty() {
+                        break;
+                    }
+                }
+                let seed = rng.below(1000) as u64;
+                let start = World::from_level(l, seed);
+                let h = ladder(l, &p, &start, seed);
+                assert!(!h.is_empty() && h.iter().all(|x| !x.text.is_empty()), "{}: no hint for {}", l.name, p.serialize());
+                for hint in &h {
+                    if let Some(b) = hint.block {
+                        assert!(contains(&p.main, b) || contains(&p.func, b), "{}: hint points at a missing block ({})", l.name, p.serialize());
+                    }
+                }
+            }
+        }
+    }
+
     /// Every solution with one simple block taken out is one change from
     /// working, so Bit must always find a fix for it, and every hint must
     /// point at a block that's really in the program.
@@ -1056,6 +1156,463 @@ mod smart_hints {
                         assert!(contains(&p.main, b) || contains(&p.func, b), "{}: hint points at a missing block", l.name);
                     }
                 }
+            }
+        }
+    }
+}
+
+mod guided_tour {
+    use crate::levels::LEVELS;
+    use crate::play::spot_rect;
+    use crate::program::Kind;
+    use crate::tour::{allows, bubble, Facts, Out, Spot, Tour, Wait, BUBBLE_MAX_H, STEPS};
+    use macroquad::math::{vec2, Rect};
+
+    /// Plays the tour the way a child would and checks it ends after RUN.
+    #[test]
+    fn the_tour_can_be_finished() {
+        let mut t = Tour::new(false);
+        let mut blocks = 0;
+        for _ in 0..STEPS.len() {
+            let out = match t.current().wait {
+                Wait::Next => t.next(),
+                Wait::Blocks(n) => {
+                    assert_eq!(t.update(&Facts { main_blocks: n - 1, running: false }), Out::Stay);
+                    assert_eq!(t.current().wait, Wait::Blocks(n), "moved on too early");
+                    blocks = n;
+                    t.update(&Facts { main_blocks: n, running: false })
+                }
+                Wait::Run => {
+                    assert_eq!(t.update(&Facts { main_blocks: blocks, running: false }), Out::Stay);
+                    t.update(&Facts { main_blocks: blocks, running: true })
+                }
+            };
+            if out == Out::Done {
+                assert_eq!(t.step, STEPS.len(), "only the last step may finish the tour");
+                return;
+            }
+        }
+        panic!("the tour never finished");
+    }
+
+    /// The tour talks about level 1: a FORWARD block first in the palette,
+    /// and a portal 4 squares away.
+    #[test]
+    fn the_tour_matches_level_one() {
+        let l = &LEVELS[0];
+        assert_eq!(l.palette[0], Kind::Forward);
+        assert_eq!(l.solution, "F F F F");
+        assert!(STEPS.iter().any(|s| s.wait == Wait::Blocks(4)));
+        assert_eq!(STEPS.last().unwrap().wait, Wait::Run);
+    }
+
+    /// On every screen shape: the bubble is on screen, beside (never on top
+    /// of) what it points at, and at least as wide as the tour needs.
+    #[test]
+    fn bubbles_never_cover_what_they_point_at() {
+        for &(name, sw, sh) in crate::layout::SAMPLE_SCREENS {
+            let (cw, ch, _) = crate::layout::canvas(sw, sh);
+            let lay = crate::layout::Layout::new(cw, ch, false);
+            let on_screen = |r: Rect| r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= cw && r.y + r.h <= ch;
+            for (i, s) in STEPS.iter().enumerate() {
+                let spot = spot_rect(&lay, s.spot);
+                assert_eq!(spot.is_none(), s.spot == Spot::None, "{name} step {i}");
+                let b = bubble(spot, BUBBLE_MAX_H, (cw, ch));
+                assert!(on_screen(b), "{name} step {i}: bubble off screen: {b:?}");
+                assert!(b.w >= 360.0, "{name} step {i}: bubble too narrow ({})", b.w);
+                if let Some(r) = spot {
+                    assert!(on_screen(r), "{name} step {i}: spot off screen");
+                    assert!(!b.overlaps(&r), "{name} step {i}: bubble covers the spot");
+                }
+                // Steps that wait for an action must point at what to click.
+                assert_eq!(s.wait == Wait::Next, !allows(s, spot, spot.map_or(vec2(0.0, 0.0), |r| r.center())), "step {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn touch_screens_say_tap() {
+        for (step, s) in STEPS.iter().enumerate() {
+            let t = Tour { step, touch: true };
+            let words = t.text().to_lowercase();
+            assert!(!words.contains("click") && !words.contains("mouse"), "step {step}: {words}");
+            // "clicking" would become "taping".
+            assert!(!s.text.to_lowercase().contains("clicking"));
+            // Long enough to fit Bit's tallest bubble with room to spare.
+            assert!(t.text().len() <= 300, "step {step} is too long for its bubble");
+        }
+    }
+}
+
+/// The `count` variable: saves are untrusted, numbers stay in bounds, and
+/// endless loops are caught. Nothing here can reach outside the game: the VM
+/// only ever hands back one of five miner actions.
+mod variables {
+    use super::level;
+    use crate::program::{simulate, Kind, Program, Step, Vm, MAX_VALUE};
+    use crate::world::{Rng, World};
+
+    fn run_count(src: &str) -> (u32, Option<String>) {
+        let p = Program::deserialize(src).unwrap();
+        let w = World::from_level(level("The Number Box"), 0);
+        let mut vm = Vm::new(&p);
+        let mut w2 = w.clone();
+        loop {
+            match vm.next(&w2) {
+                Step::Act(a, _) => {
+                    if !matches!(w2.apply(a), crate::world::Outcome::Ok) {
+                        return (vm.count, None);
+                    }
+                }
+                Step::Var(_) => {}
+                Step::Done => return (vm.count, None),
+                Step::Error(m, _) => return (vm.count, Some(m)),
+            }
+        }
+    }
+
+    #[test]
+    fn numbers_outside_the_editor_s_range_are_rejected() {
+        for bad in ["S21", "S-1", "S", "A0", "A10", "A99999999999", "S1x", "[V1 F ]", "[V F ]", "[V0 F", "A1 ]"] {
+            assert!(Program::deserialize(bad).is_none(), "{bad} should not load");
+        }
+        for good in ["S0", "S20", "A1", "A9", "[V0 ]", "S3 [V0 [V0 F ] ]"] {
+            assert!(Program::deserialize(good).is_some(), "{good} should load");
+        }
+    }
+
+    #[test]
+    fn count_never_goes_past_its_limit() {
+        // 9 x 99 would be 891; the box stops at MAX_VALUE.
+        let (count, err) = run_count("[R99 A9 ]");
+        assert_eq!(count, MAX_VALUE);
+        assert!(err.is_none());
+        assert_eq!(run_count("S20 S0").0, 0);
+    }
+
+    #[test]
+    fn loops_that_only_change_count_are_caught() {
+        let (_, err) = run_count("[W0 A1 ]");
+        assert!(err.is_some_and(|m| m.contains("count")), "an endless ADD loop must stop with a message");
+        // A big REPEAT COUNT still stops at the action limit.
+        let p = Program::deserialize("S20 [V0 [V0 [V0 L ] ] ]").unwrap();
+        assert!(simulate(&p, World::from_level(level("The Number Box"), 0)).is_err());
+    }
+
+    #[test]
+    fn repeat_count_runs_zero_times_when_count_is_zero() {
+        let p = Program::deserialize("[V0 F ]").unwrap();
+        let mut vm = Vm::new(&p);
+        let w = World::from_level(level("The Number Box"), 0);
+        assert!(matches!(vm.next(&w), Step::Done), "count starts at 0, so nothing runs");
+    }
+
+    /// Random junk and random mutations of real programs never panic the
+    /// loader, and whatever loads runs to an end within the limits.
+    #[test]
+    fn random_saves_never_crash() {
+        let toks = ["F", "L", "R", "M", "P", "C", "S", "S3", "S20", "S21", "A1", "A9", "A0", "[V0", "[V1", "[R3", "[R0", "[I3", "[E1", "[W0", "[W9", "|", "]", "/", "é", "[V0é", "S٣"];
+        let mut rng = Rng::new(42);
+        let world = World::from_level(level("Echo Hall"), 1);
+        for _ in 0..3000 {
+            let n = rng.below(14);
+            let s: Vec<&str> = (0..n).map(|_| toks[rng.below(toks.len())]).collect();
+            let src = s.join(" ");
+            if let Some(p) = Program::deserialize(&src) {
+                let _ = simulate(&p, world.clone());
+                // Saving and loading again gives the same program.
+                assert_eq!(Program::deserialize(&p.serialize()).map(|q| q.serialize()), Some(p.serialize()), "{src}");
+            }
+        }
+    }
+
+    #[test]
+    fn rust_view_declares_and_borrows_count() {
+        let p = Program::deserialize("S2 C [V0 F ] / A1").unwrap();
+        let code = p.to_rust().join("\n");
+        assert!(code.contains("let mut count = 0;"), "{code}");
+        assert!(code.contains("my_function(&mut count);"), "{code}");
+        assert!(code.contains("fn my_function(count: &mut u32) {"), "{code}");
+        assert!(code.contains("*count += 1;"), "{code}");
+        assert!(code.contains("for _ in 0..count {"), "{code}");
+        // Programs without variables look exactly as before.
+        let plain = Program::deserialize("F C / L").unwrap().to_rust().join("\n");
+        assert!(!plain.contains("count") && plain.contains("fn my_function() {"), "{plain}");
+    }
+
+    /// Each level in the variables world needs the variable: the plain ways
+    /// fail somewhere or don't fit in the block limit.
+    #[test]
+    fn variables_levels_need_the_variable() {
+        let too_long = [
+            ("The Number Box", "F F F F F F F"),
+            ("Two Long Halls", "F F F F F R F F F F F"),
+            ("Growing Stairs", "F L F R F F L F R F F F L F R F F F F"),
+            // A lawnmower sweep finds the portal without counting, but needs more blocks.
+            ("Echo Hall", "[R3 [W0 F ] R F R [W0 F ] L F L ]"),
+            ("Stone Counter", "R [R3 [W0 F ] L F L [W0 F ] R F R ]"),
+        ];
+        for (name, src) in too_long {
+            let l = level(name);
+            let p = Program::deserialize(src).unwrap();
+            assert!(p.block_count() > l.max_blocks.unwrap(), "{name}: {src} fits in the block limit");
+        }
+        for l in crate::levels::LEVELS.iter().filter(|l| l.chapter == 5) {
+            let p = Program::deserialize(l.solution).unwrap();
+            let mut used = Vec::new();
+            crate::program::kinds_used(&p.main, &mut used);
+            assert!(used.contains(&Kind::RepeatCount), "{}: the solution should use the variable", l.name);
+        }
+    }
+}
+
+mod panels {
+    use crate::levels::LEVELS;
+    use crate::ui::{Scrollbar, Ui, VH, VW};
+    use macroquad::math::{vec2, Rect};
+
+    fn ui_at(x: f32, y: f32, click: bool, down: bool) -> Ui {
+        Ui { mouse: vec2(x, y), click, rclick: false, release: !down, down, wheel: 0.0, enabled: true, clicked_any: false }
+    }
+
+    /// The run controls have their own panel, so no block can hide behind them,
+    /// and every level's blocks can be reached by scrolling.
+    #[test]
+    fn blocks_never_hide_behind_the_run_controls() {
+        let lay = crate::layout::Layout::new(VW, VH, false);
+        let (palette, list, controls) = (lay.palette.unwrap(), lay.palette_list().unwrap(), lay.controls);
+        assert!(!palette.overlaps(&controls), "the blocks and the run controls must not overlap");
+        for r in [palette, controls] {
+            assert!(r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= VW && r.y + r.h <= VH);
+        }
+        for b in [lay.run, lay.step, lay.reset, lay.speed] {
+            assert!(controls.contains(b.point()) && controls.contains(b.point() + b.size()), "{b:?} is outside the controls panel");
+        }
+        let rows = crate::play::palette_rows(list);
+        for i in 0..rows {
+            let b = crate::play::palette_button(list, i);
+            assert!(b.y >= list.y && b.y + b.h <= list.y + list.h, "block {i} doesn't fit");
+        }
+        let most = LEVELS.iter().map(|l| l.palette.len()).max().unwrap();
+        assert!(most > rows, "test the scrolling case: the biggest palette ({most}) should need it");
+    }
+
+    #[test]
+    fn scrollbar_drags_pages_and_hides() {
+        let track = Rect::new(100.0, 100.0, 14.0, 400.0);
+        let mut bar = Scrollbar::default();
+        let mut scroll = 0.0;
+        // Everything fits: no bar, no scroll.
+        assert!(bar.handle(&mut ui_at(107.0, 150.0, true, true), track, 300.0, 400.0, &mut scroll).is_none());
+        // Click below the thumb: down a page.
+        let thumb = bar.handle(&mut ui_at(0.0, 0.0, false, false), track, 1000.0, 400.0, &mut scroll).unwrap();
+        assert_eq!(thumb.y, track.y);
+        bar.handle(&mut ui_at(107.0, 490.0, true, true), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 320.0);
+        // Grab the thumb and drag it to the bottom: the end of the list.
+        let thumb = bar.handle(&mut ui_at(0.0, 0.0, false, false), track, 1000.0, 400.0, &mut scroll).unwrap();
+        let grab_y = thumb.y + 5.0;
+        bar.handle(&mut ui_at(107.0, grab_y, true, true), track, 1000.0, 400.0, &mut scroll);
+        bar.handle(&mut ui_at(107.0, grab_y + 1000.0, false, true), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 600.0, "can't scroll past the end");
+        // Let go, and the thumb stops following the mouse.
+        bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
+        bar.handle(&mut ui_at(107.0, 100.0, false, false), track, 1000.0, 400.0, &mut scroll);
+        assert_eq!(scroll, 600.0);
+    }
+}
+
+mod layouts {
+    use crate::layout::{canvas, Layout, Shape, MIN_H, MIN_SCALE, MIN_W, SAMPLE_SCREENS};
+    use crate::play::palette_rows;
+    use crate::ui::{VH, VW};
+    use macroquad::math::Rect;
+
+    /// At 1280x800 the layout is exactly the desktop one it replaced.
+    #[test]
+    fn desktop_layout_is_unchanged() {
+        assert_eq!(canvas(1280.0, 800.0), (VW, VH, 1.0));
+        let l = Layout::new(VW, VH, false);
+        assert_eq!(l.shape, Shape::Wide);
+        let eq = |a: Rect, b: (f32, f32, f32, f32)| assert_eq!((a.x, a.y, a.w, a.h), b);
+        eq(l.world, (16.0, 68.0, 720.0, 480.0));
+        eq(l.hud, (16.0, 558.0, 720.0, 38.0));
+        eq(l.guide, (16.0, 604.0, 720.0, 180.0));
+        eq(l.palette.unwrap(), (752.0, 68.0, 196.0, 548.0));
+        eq(l.controls, (752.0, 628.0, 196.0, 156.0));
+        eq(l.editor, (962.0, 68.0, 302.0, 716.0));
+        eq(l.levels, (14.0, 10.0, 110.0, 36.0));
+        eq(l.code, (800.0, 10.0, 150.0, 36.0));
+        eq(l.help, (962.0, 10.0, 110.0, 36.0));
+        eq(l.sound, (1084.0, 10.0, 180.0, 36.0));
+        eq(l.hint, (120.0, 742.0, 110.0, 32.0));
+        eq(l.goal, (242.0, 742.0, 110.0, 32.0));
+        eq(l.run, (762.0, 638.0, 176.0, 50.0));
+        // A running program doesn't move anything on the desktop.
+        assert_eq!(format!("{l:?}"), format!("{:?}", Layout::new(VW, VH, true)));
+    }
+
+    /// Phones, tablets and small windows get readable text and a layout where
+    /// everything fits, nothing overlaps, and buttons are big enough to tap.
+    #[test]
+    fn every_screen_gets_a_readable_layout() {
+        for &(name, sw, sh) in SAMPLE_SCREENS {
+            let (cw, ch, scale) = canvas(sw, sh);
+            // Only screens smaller than the smallest canvas may go below the readable scale.
+            // Only screens smaller than the smallest canvas go below the readable
+            // scale, and never far below it.
+            assert!(scale >= MIN_SCALE - 1e-4 || sw < MIN_W * MIN_SCALE || sh < MIN_H * MIN_SCALE, "{name}: scale {scale}");
+            assert!(scale >= 0.7, "{name}: text would be too small (scale {scale})");
+            assert!((cw * scale - sw).abs() < 1.0 || (ch * scale - sh).abs() < 1.0, "{name}: the canvas should fill the screen one way");
+            for running in [false, true] {
+                let l = Layout::new(cw, ch, running);
+                let inside = |r: Rect| r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= cw + 0.01 && r.y + r.h <= ch + 0.01;
+                let mut panels = vec![("world", l.world), ("hud", l.hud), ("guide", l.guide), ("controls", l.controls), ("editor", l.editor)];
+                if let Some(p) = l.palette {
+                    panels.push(("palette", p));
+                }
+                let top = [("levels", l.levels), ("code", l.code), ("help", l.help), ("sound", l.sound)];
+                for (n, r) in panels.iter().chain(top.iter()) {
+                    assert!(inside(*r), "{name}: {n} is off the canvas: {r:?}");
+                }
+                for (i, (a, ra)) in panels.iter().chain(top.iter()).enumerate() {
+                    for (b, rb) in panels.iter().chain(top.iter()).skip(i + 1) {
+                        assert!(!ra.overlaps(rb), "{name}: {a} overlaps {b}");
+                    }
+                }
+                for (n, b) in top.iter().chain([("run", l.run), ("step", l.step), ("reset", l.reset), ("speed", l.speed), ("hint", l.hint)].iter()) {
+                    assert!(b.h >= 32.0 && b.w >= 64.0, "{name}: {n} is too small to tap: {b:?}");
+                    let holder = if ["run", "step", "reset", "speed"].contains(n) { l.controls } else if *n == "hint" { l.guide } else { Rect::new(0.0, 0.0, cw, l.top_h) };
+                    assert!(holder.contains(b.point()) && holder.contains(b.point() + b.size()), "{name}: {n} sticks out of its panel");
+                }
+                // Popups fit.
+                for (w, h, y) in [(760.0, 540.0, 120.0), (840.0, 660.0, 70.0), (680.0, 600.0, 130.0)] {
+                    assert!(inside(l.popup(w, h, y)), "{name}: popup {w}x{h} doesn't fit");
+                }
+                // Screens narrower than today's phones (360 points) are best effort:
+                // everything fits without overlapping, but panels may be cramped.
+                if sw < 360.0 {
+                    continue;
+                }
+                assert!(l.world.w >= 300.0 && l.world.h >= 160.0, "{name}: world too small {:?}", l.world);
+                assert!(l.editor.h >= 250.0 && l.editor.w >= 260.0, "{name}: program panel too small {:?}", l.editor);
+                match l.palette_list() {
+                    Some(list) => assert!(palette_rows(list) >= 3, "{name}: only {} blocks fit", palette_rows(list)),
+                    None => assert!(running && l.shape == Shape::Tall, "{name}: the blocks only step aside while running on a tall screen"),
+                }
+            }
+        }
+    }
+
+    /// Phones held upright get the stacked layout; sideways and bigger get columns.
+    #[test]
+    fn shapes_follow_the_screen() {
+        let shape = |sw, sh| {
+            let (cw, ch, _) = canvas(sw, sh);
+            Layout::new(cw, ch, false).shape
+        };
+        assert_eq!(shape(390.0, 844.0), Shape::Tall);
+        assert_eq!(shape(844.0, 390.0), Shape::Wide);
+        assert_eq!(shape(1024.0, 600.0), Shape::Wide);
+        assert_eq!(shape(1920.0, 1080.0), Shape::Wide);
+    }
+}
+
+/// Prints the real sizes of each layout, for the TypeSafe re-check:
+/// `cargo test print_layouts -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn print_layouts() {
+    use crate::layout::{canvas, Layout};
+    use crate::play::palette_rows;
+    for (name, sw, sh) in [("phone_portrait", 390.0, 844.0), ("phone_landscape", 844.0, 390.0), ("small_tablet", 1024.0, 600.0)] {
+        let (cw, ch, scale) = canvas(sw, sh);
+        for running in [false, true] {
+            let l = Layout::new(cw, ch, running);
+            let rows = ((l.editor.h - 128.0) / 36.0).floor();
+            println!(
+                "{name} running={running} canvas={cw:.0}x{ch:.0} scale={scale:.2} shape={:?} world={:.0}x{:.0} blocks_visible={} program_w={:.0} program_rows={rows} message={:.0}x{:.0}",
+                l.shape, l.world.w, l.world.h, l.palette_list().map_or(0, palette_rows), l.editor.w, l.guide.w - 116.0, l.guide.h - 24.0
+            );
+        }
+    }
+}
+
+/// Text must be readable: WCAG AA, 4.5:1, for every button, block and label.
+mod contrast {
+    use crate::editor::kind_color;
+    use crate::levels::CHAPTERS;
+    use crate::program::Kind;
+    use crate::ui::*;
+    use macroquad::color::{Color, WHITE};
+
+    fn rgb(r: u8, g: u8, b: u8) -> Color {
+        rgb8(r, g, b)
+    }
+
+    /// Any colour a button or block could be ends up readable, hovered or not.
+    #[test]
+    fn every_colour_gets_readable_text() {
+        for r in (0..=255).step_by(15) {
+            for g in (0..=255).step_by(15) {
+                for b in (0..=255).step_by(15) {
+                    let bg = readable_bg(rgb(r as u8, g as u8, b as u8));
+                    let ink = text_on(bg);
+                    assert!(contrast(bg, ink) >= 4.5, "{r},{g},{b}: {}", contrast(bg, ink));
+                    let hover = hover_shade(bg, ink == WHITE);
+                    assert!(contrast(hover, ink) >= 4.5, "{r},{g},{b} hovered: {}", contrast(hover, ink));
+                    // Making it readable doesn't change it again.
+                    assert_eq!(readable_bg(bg), bg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_hint_button_and_yellow_blocks_get_dark_text() {
+        // These were white on gold (2.5:1 and 2.1:1).
+        for c in [rgb(200, 160, 40), rgb(225, 175, 40), kind_color(Kind::Repeat), kind_color(Kind::While)] {
+            assert_eq!(text_on(readable_bg(c)), DARK_TEXT);
+            assert!(contrast(readable_bg(c), DARK_TEXT) >= 6.0);
+        }
+    }
+
+    /// Bit's Hint and Goal buttons reach AAA (7:1): they're what a stuck child reaches for.
+    #[test]
+    fn hint_and_goal_reach_aaa() {
+        for c in [rgb(200, 160, 40), rgb(78, 78, 96)] {
+            let bg = readable_bg(c);
+            assert!(contrast(bg, text_on(bg)) >= 7.0, "{c:?}: {}", contrast(bg, text_on(bg)));
+        }
+    }
+
+    #[test]
+    fn every_block_label_reads() {
+        use Kind::*;
+        for k in [Forward, TurnLeft, TurnRight, Mine, Place, Repeat, If, IfElse, While, Call, Set, Add, RepeatCount] {
+            let c = kind_color(k);
+            assert!(contrast(c, text_on(c)) >= 4.5, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn titles_world_tiles_and_locked_text_read() {
+        for c in [TITLE_ON_LIGHT, WARN_ON_LIGHT, DARK_TEXT] {
+            assert!(contrast(c, PANEL) >= 4.5, "{c:?} on the light popups: {}", contrast(c, PANEL));
+        }
+        for bg in [rgb(60, 60, 60), rgb(70, 70, 70)] {
+            assert!(contrast(LOCKED_TEXT, bg) >= 4.5);
+        }
+        for ch in &CHAPTERS {
+            let c = rgb(ch.color.0, ch.color.1, ch.color.2);
+            let chosen = readable_bg(c);
+            assert!(contrast(chosen, text_on(chosen)) >= 4.5, "{}", ch.name);
+            // The World Check's header bar: white on the world's colour, dimmed.
+            assert!(contrast(crate::art::shade(c, 0.55), WHITE) >= 4.5, "{}: World Check header", ch.name);
+            // Unchosen worlds are darker and keep their yellow accents.
+            let dim = readable_bg(crate::art::shade(c, 0.5));
+            for accent in [rgb(255, 230, 140), rgb(255, 215, 40), WHITE] {
+                assert!(contrast(dim, accent) >= 4.5, "{}: accent on the dimmed tile: {}", ch.name, contrast(dim, accent));
             }
         }
     }

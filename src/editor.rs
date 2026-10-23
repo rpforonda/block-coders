@@ -50,14 +50,17 @@ pub struct Cursor {
     pub index: usize,
 }
 
+/// A block's colour, made readable (see `ui::readable_bg`): its label goes
+/// on it in `text_on(kind_color(k))`.
 pub fn kind_color(k: Kind) -> Color {
-    match k {
+    readable_bg(match k {
         Kind::Forward | Kind::TurnLeft | Kind::TurnRight => rgb8(60, 120, 230),
         Kind::Mine | Kind::Place => rgb8(220, 120, 30),
         Kind::Repeat | Kind::While => rgb8(225, 170, 20),
         Kind::If | Kind::IfElse => rgb8(140, 80, 210),
         Kind::Call => rgb8(215, 65, 140),
-    }
+        Kind::Set | Kind::Add | Kind::RepeatCount => rgb8(30, 160, 150),
+    })
 }
 
 fn list_ref<'a>(p: &'a Program, path: &LPath) -> Option<&'a Vec<Node>> {
@@ -235,6 +238,7 @@ pub struct Editor {
     pub tab: Tab,
     pub cursor: Cursor,
     scroll: f32,
+    bar: Scrollbar,
     follow_cursor: bool,
     last_highlight: Option<u32>,
     drag: Option<Drag>,
@@ -248,6 +252,7 @@ impl Editor {
             tab: Tab::Main,
             cursor: Cursor { list: LPath::root(Tab::Main), index: usize::MAX },
             scroll: 0.0,
+            bar: Scrollbar::default(),
             follow_cursor: true,
             last_highlight: None,
             drag: None,
@@ -264,6 +269,12 @@ impl Editor {
     /// Moves a block (and everything inside it) to `target`. A placeholder
     /// marks the target first, so removing the block can't shift the spot.
     fn move_node(&mut self, p: &mut Program, id: u32, target: &Cursor) -> bool {
+        // A block can't go inside itself: taking it out would take the target too.
+        let Some((from, i)) = locate_in(p, id) else { return false };
+        let t = &target.list;
+        if t.tab == from.tab && t.steps.len() > from.steps.len() && t.steps[..from.steps.len()] == from.steps[..] && t.steps[from.steps.len()].0 == i {
+            return false;
+        }
         let Some(list) = list_mut(p, &target.list) else { return false };
         let index = target.index.min(list.len());
         list.insert(index, Node { id: PLACEHOLDER, ..Node::new(Kind::Forward, Cond::PathAhead) });
@@ -419,11 +430,15 @@ impl Editor {
         }
         self.last_highlight = shown;
         self.scroll = self.scroll.clamp(0.0, (content_h - rows_area.h).max(0.0));
+        // A long program gets a scrollbar on the right, and its blocks make room for it.
+        let track = Rect::new(area.x + area.w - SCROLLBAR_W - 3.0, rows_area.y, SCROLLBAR_W, rows_area.h);
+        self.bar.update(ui, track, content_h, rows_area.h, &mut self.scroll);
+        let bar_w = if content_h > rows_area.h { SCROLLBAR_W + 2.0 } else { 0.0 };
 
         let top = rows_area.y - self.scroll;
         let visible = |y: f32, h: f32| y >= rows_area.y - 1.0 && y + h <= rows_area.y + rows_area.h + 1.0;
         let bx = |depth: usize| area.x + 8.0 + depth as f32 * INDENT;
-        let bw = |depth: usize| area.w - 16.0 - depth as f32 * INDENT;
+        let bw = |depth: usize| area.w - 16.0 - bar_w - depth as f32 * INDENT;
 
         if root.is_empty() {
             let msg = if self.tab == Tab::Func {
@@ -467,29 +482,34 @@ impl Editor {
             }
             let rect = Rect::new(x, sy + 2.0, w, ROW_H - 6.0);
             bevel(rect, color);
-            block_icon(node.kind, x + 5.0, sy + 6.0, 22.0, art);
-            let dark_text = luminance(color) > 0.8;
-            let tc = if dark_text { rgb8(40, 30, 0) } else { WHITE };
+            let tc = text_on(color);
+            let dark_text = tc != WHITE;
+            block_icon(node.kind, x + 5.0, sy + 6.0, 22.0, tc, art);
             let label_x = x + 34.0;
             let ty = sy + 9.0;
             let say = |s: &str, x: f32| if dark_text { text(s, x, ty, 18.0, tc) } else { shadow_text(s, x, ty, 18.0, tc) };
-            match node.kind {
-                Kind::Repeat => {
-                    say("repeat", label_x);
-                    let mx = label_x + text_width("repeat", 18.0) + 8.0;
-                    let minus = Rect::new(mx, sy + 7.0, 20.0, 20.0);
-                    let num = format!("{}", node.count);
-                    let nx = mx + 26.0;
-                    let plus = Rect::new(nx + text_width("00", 20.0) + 6.0, sy + 7.0, 20.0, 20.0);
-                    if ui.button(minus, "-", rgb8(250, 240, 200), 20.0) {
-                        edit = Some(Edit::Count(r.list.clone(), r.index, -1));
-                    }
-                    text(&num, nx + (text_width("00", 20.0) - text_width(&num, 20.0)) / 2.0, sy + 8.0, 20.0, tc);
-                    if ui.button(plus, "+", rgb8(250, 240, 200), 20.0) {
-                        edit = Some(Edit::Count(r.list.clone(), r.index, 1));
-                    }
-                    say("times", plus.x + 26.0);
+            // Words, a number with - and + buttons, then more words.
+            let mut number = |before: &str, after: &str| {
+                say(before, label_x);
+                let mx = label_x + text_width(before, 18.0) + 8.0;
+                let minus = Rect::new(mx, sy + 7.0, 20.0, 20.0);
+                let num = format!("{}", node.count);
+                let nx = mx + 26.0;
+                let plus = Rect::new(nx + text_width("00", 20.0) + 6.0, sy + 7.0, 20.0, 20.0);
+                if ui.button(minus, "-", rgb8(250, 240, 200), 20.0) {
+                    edit = Some(Edit::Count(r.list.clone(), r.index, -1));
                 }
+                text(&num, nx + (text_width("00", 20.0) - text_width(&num, 20.0)) / 2.0, sy + 8.0, 20.0, tc);
+                if ui.button(plus, "+", rgb8(250, 240, 200), 20.0) {
+                    edit = Some(Edit::Count(r.list.clone(), r.index, 1));
+                }
+                say(after, plus.x + 26.0);
+            };
+            match node.kind {
+                Kind::Repeat => number("repeat", "times"),
+                Kind::Set => number("set count to", ""),
+                Kind::Add => number("add", "to count"),
+                Kind::RepeatCount => say("repeat count times", label_x),
                 Kind::If | Kind::IfElse | Kind::While => {
                     let word = if node.kind == Kind::While { "while" } else { "if" };
                     say(word, label_x);
@@ -583,14 +603,6 @@ impl Editor {
             }
         }
 
-        // Scroll hints
-        if self.scroll > 0.0 {
-            text_centered("^ more ^", Rect::new(area.x, rows_area.y - 2.0, area.w, 14.0), 14.0, rgb8(200, 200, 200), false);
-        }
-        if content_h - self.scroll > rows_area.h + 1.0 {
-            text_centered("v more v", Rect::new(area.x, rows_area.y + rows_area.h - 12.0, area.w, 14.0), 14.0, rgb8(200, 200, 200), false);
-        }
-
         // Footer: block counter, undo/redo and clear.
         let fy = area.y + area.h - FOOTER_H;
         let used = p.block_count();
@@ -625,8 +637,9 @@ impl Editor {
                 changed = true;
             }
             Some(Edit::Count(list, i, d)) => {
-                if let Some(n) = list_mut(p, &list).and_then(|l| l.get_mut(i)) {
-                    n.count = (n.count as i32 + d).clamp(1, 20) as u32;
+                let node = list_mut(p, &list).and_then(|l| l.get_mut(i));
+                if let Some((n, (lo, hi))) = node.and_then(|n| n.kind.number_range().map(|r| (n, r))) {
+                    n.count = (n.count as i32 + d).clamp(lo as i32, hi as i32) as u32;
                 }
                 changed = true;
             }
@@ -699,9 +712,15 @@ impl Editor {
             };
             let trash = matches!(src, DragSource::Block(_)) && !ui.hover(area);
             let g = Rect::new(ui.mouse.x - 20.0, ui.mouse.y - 15.0, 190.0, 30.0);
-            bevel(g, if trash { rgb8(150, 50, 50) } else { kind_color(kind) });
-            block_icon(kind, g.x + 4.0, g.y + 4.0, 22.0, art);
-            shadow_text(&label, g.x + 32.0, g.y + 7.0, 18.0, WHITE);
+            let bg = if trash { rgb8(150, 50, 50) } else { kind_color(kind) };
+            let tc = text_on(bg);
+            bevel(g, bg);
+            block_icon(kind, g.x + 4.0, g.y + 4.0, 22.0, tc, art);
+            if tc == WHITE {
+                shadow_text(&label, g.x + 32.0, g.y + 7.0, 18.0, tc);
+            } else {
+                text(&label, g.x + 32.0, g.y + 7.0, 18.0, tc);
+            }
             if trash {
                 shadow_text("let go to delete", g.x, g.y + 36.0, 16.0, rgb8(255, 150, 140));
             }
@@ -731,6 +750,84 @@ mod tests {
 
     fn main_at(i: usize) -> Cursor {
         Cursor { list: LPath::root(Tab::Main), index: i }
+    }
+
+    fn all_ids(list: &[Node], out: &mut Vec<u32>) {
+        for n in list {
+            out.push(n.id);
+            all_ids(&n.body, out);
+            all_ids(&n.els, out);
+        }
+    }
+
+    /// Every slot in both tabs, as the editor would offer them.
+    fn all_slots(p: &Program) -> Vec<Cursor> {
+        let mut out = Vec::new();
+        for tab in [Tab::Main, Tab::Func] {
+            let (mut rows, mut slots, mut y) = (Vec::new(), Vec::new(), 0.0);
+            layout(list_ref(p, &LPath::root(tab)).unwrap(), LPath::root(tab), 0, &mut y, &mut rows, &mut slots);
+            out.extend(slots.into_iter().map(|s| s.cur));
+        }
+        out
+    }
+
+    /// Random inserts, moves (including onto slots inside the moved block,
+    /// which the drag code refuses but `move_node` must survive) and deletes
+    /// never lose or duplicate a block, and always leave a program that saves
+    /// and loads the same.
+    #[test]
+    fn random_edits_keep_the_program_whole() {
+        use crate::levels::LEVELS;
+        use crate::world::Rng;
+        let level = LEVELS.iter().find(|l| l.name == "Master Miner").unwrap();
+        let kinds = [Kind::Forward, Kind::Mine, Kind::Repeat, Kind::If, Kind::IfElse, Kind::While, Kind::Call, Kind::Set, Kind::RepeatCount];
+        let mut rng = Rng::new(9);
+        for _ in 0..300 {
+            let mut p = Program::default();
+            let mut e = Editor::new();
+            for _ in 0..40 {
+                let before = p.serialize();
+                let count = p.block_count();
+                let slots = all_slots(&p);
+                let mut ids = Vec::new();
+                all_ids(&p.main, &mut ids);
+                all_ids(&p.func, &mut ids);
+                match rng.below(4) {
+                    0 | 1 => {
+                        let s = slots[rng.below(slots.len())].clone();
+                        e.tab = s.list.tab;
+                        e.cursor = s;
+                        e.insert(&mut p, kinds[rng.below(kinds.len())], level);
+                        assert_eq!(p.block_count(), count + 1);
+                    }
+                    2 if !ids.is_empty() => {
+                        let id = ids[rng.below(ids.len())];
+                        let target = slots[rng.below(slots.len())].clone();
+                        let moved = e.move_node(&mut p, id, &target);
+                        assert_eq!(p.block_count(), count, "a move lost or copied blocks: {before} -> {}", p.serialize());
+                        if !moved {
+                            assert_eq!(p.serialize(), before, "a refused move changed the program");
+                        }
+                    }
+                    _ => {
+                        let s = slots[rng.below(slots.len())].clone();
+                        e.tab = s.list.tab;
+                        e.cursor = s;
+                        e.delete_before_cursor(&mut p);
+                    }
+                }
+                let mut ids = Vec::new();
+                all_ids(&p.main, &mut ids);
+                all_ids(&p.func, &mut ids);
+                let n = ids.len();
+                ids.sort();
+                ids.dedup();
+                assert_eq!(ids.len(), n, "duplicate block ids");
+                assert!(!ids.contains(&PLACEHOLDER), "a placeholder was left behind");
+                let again = Program::deserialize(&p.serialize()).expect("edited program must load");
+                assert_eq!(again.serialize(), p.serialize());
+            }
+        }
     }
 
     #[test]

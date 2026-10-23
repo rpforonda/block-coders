@@ -14,12 +14,13 @@ pub struct Chapter {
     pub color: (u8, u8, u8),
 }
 
-pub const CHAPTERS: [Chapter; 6] = [
+pub const CHAPTERS: [Chapter; 7] = [
     Chapter { name: "Grassy Plains", concept: "Sequences", color: (98, 163, 58) },
     Chapter { name: "Loop Caves", concept: "Loops", color: (150, 110, 75) },
     Chapter { name: "Function Forest", concept: "Functions", color: (40, 120, 60) },
     Chapter { name: "Decision Desert", concept: "If / Else", color: (210, 180, 90) },
     Chapter { name: "The Deep Dark", concept: "While loops & algorithms", color: (60, 70, 110) },
+    Chapter { name: "Counting Caverns", concept: "Variables", color: (40, 150, 140) },
     Chapter { name: "Nether Fortress", concept: "Master challenges", color: (170, 50, 40) },
 ];
 
@@ -73,6 +74,12 @@ const P_FUNC: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Place, Repeat, Cal
 const P_IF: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Place, Repeat, Call, If];
 const P_IFELSE: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Place, Repeat, Call, If, IfElse];
 const P_ALL: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Place, Repeat, Call, If, IfElse, While];
+const P_SET: &[Kind] = &[Forward, TurnLeft, TurnRight, Set, RepeatCount];
+const P_ADD: &[Kind] = &[Forward, TurnLeft, TurnRight, Repeat, Set, Add, RepeatCount];
+const P_COUNT: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Repeat, While, Set, Add, RepeatCount];
+/// Every block, for the Nether Fortress.
+const P_EVERY: &[Kind] =
+    &[Forward, TurnLeft, TurnRight, Mine, Place, Repeat, Call, If, IfElse, While, Set, Add, RepeatCount];
 
 const NO_CONDS: &[Cond] = &[];
 const STONE_CONDS: &[Cond] = &[Cond::StoneAhead, Cond::PathAhead];
@@ -1000,15 +1007,131 @@ pub static LEVELS: &[Level] = &[
         solution: "[W7 [I3 M ] [I5 P ] [E0 F | [E1 L | R ] ] ]",
         ..BASE
     },
-    // ======================= World 6: Master challenges =======================
+    // ======================= World 6: Variables =======================
+    Level {
+        name: "The Number Box",
+        chapter: 5,
+        maps: &[&["TTTTTTTTTT", "T>......PT", "TTTTTTTTTT"]],
+        palette: P_SET,
+        par: 3,
+        max_blocks: Some(3),
+        intro: Some((
+            "New: VARIABLES",
+            "A VARIABLE is like a box with a name on it. The box holds a number. \
+             Your box is called count, and you can see it under the world.\n\n\
+             SET COUNT TO puts a number in the box. REPEAT COUNT TIMES looks in the box \
+             to see how many times to go round.\n\n\
+             Only 3 blocks fit! Count the squares to the portal. Put that number in the box, then repeat FORWARD that many times.",
+        )),
+        hint: "SET COUNT TO 7. Then REPEAT COUNT TIMES, with FORWARD inside it.",
+        lesson: "You stored a number in a VARIABLE, and your loop used it. Change the number in the box, and the whole program changes!",
+        floor: Floor::Dirt,
+        solution: "S7 [V0 F ]",
+        ..BASE
+    },
+    Level {
+        name: "Two Long Halls",
+        chapter: 5,
+        maps: &[&["TTTTTTTT", "T>.....T", "TTTTTT.T", "TTTTTT.T", "TTTTTT.T", "TTTTTT.T", "TTTTTTPT", "TTTTTTTT"]],
+        palette: P_SET,
+        par: 6,
+        max_blocks: Some(6),
+        hint: "Both halls are 5 squares long. SET COUNT TO 5 once. Then use REPEAT COUNT TIMES for each hall, with a turn in between.",
+        lesson: "You used one variable in two places. If the halls got longer, you would only change ONE number!",
+        floor: Floor::Dirt,
+        solution: "S5 [V0 F ] R [V0 F ]",
+        ..BASE
+    },
+    Level {
+        name: "Growing Stairs",
+        chapter: 5,
+        maps: &[&["BBBBBBBBBBBBB", "BBBBBBBBBBBBB", "BBBBBBB....PB", "BBBB....BBBBB", "BB...BBBBBBBB", "B>.BBBBBBBBBB", "BBBBBBBBBBBBB"]],
+        palette: P_ADD,
+        par: 7,
+        max_blocks: Some(8),
+        intro: Some((
+            "New block: ADD TO COUNT",
+            "Each step of these stairs is one square longer than the one before: 1, then 2, then 3, then 4.\n\n\
+             Every run, count starts at 0. ADD 1 TO COUNT makes it 1 bigger. \
+             So the first time it becomes 1, then 2, then 3.\n\n\
+             Try a REPEAT 4 with ADD 1 TO COUNT inside, then walk count squares, then climb. Watch the box!",
+        )),
+        hint: "REPEAT 4 times: ADD 1 TO COUNT, then REPEAT COUNT TIMES with FORWARD inside, then TURN LEFT, FORWARD, TURN RIGHT to climb up.",
+        lesson: "Your variable CHANGED while the program ran: 1, 2, 3, 4. That's why it's called a VARIABLE - it can vary!",
+        floor: Floor::Dirt,
+        solution: "[R4 A1 [V0 F ] L F R ]",
+        ..BASE
+    },
+    Level {
+        name: "Spiral Garden",
+        chapter: 5,
+        maps: &[&[
+            "TTTTTTTTTTT", "T.........T", "T.E.....P.T", "T.........T", "T...E.E...T",
+            "T...^.....T", "T.........T", "T.E...E...T", "T.........T", "TTTTTTTTTTT",
+        ]],
+        palette: P_ADD,
+        par: 5,
+        max_blocks: Some(7),
+        hint: "Each side of the spiral is one square longer than the last. Repeat 6 times: ADD 1 TO COUNT, walk count squares, TURN RIGHT.",
+        lesson: "Your VARIABLE went up by 1 each time round, so each side was one square longer. One changing number drew the whole spiral!",
+        solution: "[R6 A1 [V0 F ] R ]",
+        ..BASE
+    },
+    Level {
+        name: "Echo Hall",
+        chapter: 5,
+        maps: &[
+            &["BBBBBBBBBBBBBB", "B>..B........B", "B............B", "B.....P......B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>...B.......B", "B............B", "B............B", "B.......P....B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>....B......B", "B............B", "B............B", "B............B", "B.........P..B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>.....B.....B", "B............B", "B............B", "B............B", "B............B", "B...........PB", "BBBBBBBBBBBBBB"],
+        ],
+        palette: P_COUNT,
+        conds: &[Cond::PathAhead, Cond::NotAtPortal],
+        par: 10,
+        max_blocks: Some(10),
+        intro: Some((
+            "Counting as you go",
+            "The wall is in a different place every time. Count your steps as you walk!\n\n\
+             Put FORWARD and ADD 1 TO COUNT inside a WHILE loop. Each step adds 1. \
+             At the wall, the box holds the number of steps you took.\n\n\
+             The portal is that many squares down, then that many squares across, then one more.",
+        )),
+        hint: "WHILE path ahead: FORWARD, ADD 1 TO COUNT. Then TURN RIGHT, REPEAT COUNT TIMES (FORWARD), TURN LEFT, REPEAT COUNT TIMES (FORWARD), and one more FORWARD.",
+        lesson: "Your program measured the hall and REMEMBERED the number for later. Variables let programs remember things!",
+        floor: Floor::Dirt,
+        solution: "[W0 F A1 ] R [V0 F ] L [V0 F ] F",
+        ..BASE
+    },
+    Level {
+        name: "Stone Counter",
+        chapter: 5,
+        maps: &[
+            &["BBBBBBBBBBBBBB", "B>##B........B", "B............B", "B.....P......B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>###B.......B", "B............B", "B............B", "B.......P....B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>####B......B", "B............B", "B............B", "B............B", "B.........P..B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>#####B.....B", "B............B", "B............B", "B............B", "B............B", "B...........PB", "BBBBBBBBBBBBBB"],
+        ],
+        palette: P_COUNT,
+        conds: &[Cond::StoneAhead, Cond::PathAhead, Cond::NotAtPortal],
+        par: 11,
+        max_blocks: Some(11),
+        hint: "WHILE stone ahead: MINE, FORWARD, ADD 1 TO COUNT. Then use count just like in Echo Hall.",
+        lesson: "Your VARIABLE counted the stones as you mined them, then told the miner how far to go. That's how games keep score, too!",
+        floor: Floor::Dirt,
+        solution: "[W3 M F A1 ] R [V0 F ] L [V0 F ] F",
+        ..BASE
+    },
+
+    // ======================= World 7: Master challenges =======================
     Level {
         name: "Lava Sea",
-        chapter: 5,
+        chapter: 6,
         maps: &[
             &["BBBBBBBBBB", "B>&&&.BBBB", "BBBBB&BBBB", "BBBBB&BBBB", "BP&&&.BBBB", "BBBBBBBBBB"],
             &["BBBBBBBBBB", "B>&.&.&..B", "BBBBBBBB&B", "BBBBBBBB.B", "BBBBBBBB&B", "BBBP&.&..B", "BBBBBBBBBB"],
         ],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 8,
         max_blocks: Some(11),
@@ -1027,12 +1150,12 @@ pub static LEVELS: &[Level] = &[
     },
     Level {
         name: "Lava Bridges",
-        chapter: 5,
+        chapter: 6,
         maps: &[&[
             "BBBBBBBBBBB", "B>LL!.LL!.B", "BBBBBBBBBLB", "BBBBBBBBBLB", "BBBBBBBBB!B", "BBBBBBBBB.B",
             "BBBBBBBBBPB", "BBBBBBBBBBB",
         ]],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 9,
         max_blocks: Some(12),
@@ -1045,12 +1168,12 @@ pub static LEVELS: &[Level] = &[
     },
     Level {
         name: "Rubble Maze",
-        chapter: 5,
+        chapter: 6,
         maps: &[&[
             "BBBBBBBBBBB", "B>..B..?..B", "BBB.B.BBB.B", "B...B.B...B", "B.B.BBB.B.B",
             "B?B..?..B.B", "B.B.B.BBB.B", "B...B....PB", "BBBBBBBBBBB",
         ]],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 9,
         max_blocks: Some(12),
@@ -1062,12 +1185,12 @@ pub static LEVELS: &[Level] = &[
     },
     Level {
         name: "Diamond Patrol",
-        chapter: 5,
+        chapter: 6,
         maps: &[
             &["BBBBBBBBBB", "BB$$$$BBBB", "B>.....BBB", "BB$$$$.BBB", "BBBBBBPBBB", "BBBBBBBBBB"],
             &["BBBBBBBBBBBB", "BB$$$$$$BBBB", "B>.......BBB", "BB$$$$$$.BBB", "BBBBBBBBPBBB", "BBBBBBBBBBBB"],
         ],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 14,
         max_blocks: Some(17),
@@ -1080,12 +1203,12 @@ pub static LEVELS: &[Level] = &[
     },
     Level {
         name: "Nether Maze",
-        chapter: 5,
+        chapter: 6,
         maps: &[&[
             "BBBBBBBBBBB", "B>B.......B", "B!BBBBB.B.B", "B.....B.B.B", "B.BBB.B.B.B",
             "B..!B.B.B.B", "B.B.B.BBB.B", "B.B...!..PB", "BBBBBBBBBBB",
         ]],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 9,
         max_blocks: Some(12),
@@ -1098,7 +1221,7 @@ pub static LEVELS: &[Level] = &[
     },
     Level {
         name: "Master Miner",
-        chapter: 5,
+        chapter: 6,
         maps: &[
             &["BBBBBBBBBB", "B>.&.BBBBB", "BBBB.BBBBB", "BBBB..&.BB", "BBBBBBB.BB", "BBP&.&..BB", "BBBBBBBBBB"],
             &["BBBBBBBBBB", "B>.&.&..BB", "BBBBBBB.BB", "BBBBBBB&BB", "BBBP.&..BB", "BBBBBBBBBB"],
@@ -1108,7 +1231,7 @@ pub static LEVELS: &[Level] = &[
                 "BB..&.&...BB", "BB.BBBBBBBBB", "BBPBBBBBBBBB", "BBBBBBBBBBBB",
             ],
         ],
-        palette: P_ALL,
+        palette: P_EVERY,
         conds: ALL_CONDS,
         par: 10,
         max_blocks: Some(14),

@@ -102,10 +102,11 @@ impl Ui {
     }
 
     pub fn button(&mut self, r: Rect, label: &str, color: Color, size: f32) -> bool {
-        let hover = self.hover(r);
-        bevel(r, if hover { shade(color, 1.18) } else { color });
-        let tc = if luminance(color) > 0.8 { rgb8(30, 30, 30) } else { WHITE };
-        text_centered(label, r, size, tc, luminance(color) <= 0.8);
+        let bg = readable_bg(color);
+        let tc = text_on(bg);
+        let light_text = tc == WHITE;
+        bevel(r, if self.hover(r) { hover_shade(bg, light_text) } else { bg });
+        text_centered(label, r, size, tc, light_text);
         self.clicked(r)
     }
 
@@ -115,9 +116,56 @@ impl Ui {
             self.button(r, label, color, size)
         } else {
             bevel(r, rgb8(90, 90, 90));
-            text_centered(label, r, size, rgb8(150, 150, 150), false);
+            text_centered(label, r, size, DISABLED_TEXT, false);
             false
         }
+    }
+}
+
+/// Width of a scrollbar, wide enough to grab with a finger on a touch screen.
+pub const SCROLLBAR_W: f32 = 14.0;
+
+/// A vertical scrollbar for a list taller than the box it's shown in. Drag
+/// the thumb, or click the track above or below it to move a page. This also
+/// works where there's no mouse wheel (touch screens, some trackpads).
+#[derive(Default)]
+pub struct Scrollbar {
+    /// While the thumb is held: the mouse y and the scroll when it was grabbed.
+    grab: Option<(f32, f32)>,
+}
+
+impl Scrollbar {
+    /// Handles the mouse and draws the bar in `track`. Call it before drawing
+    /// the list, so a click on the bar never reaches the list. Does nothing
+    /// (and draws nothing) when `content` fits in `view`.
+    pub fn update(&mut self, ui: &mut Ui, track: Rect, content: f32, view: f32, scroll: &mut f32) {
+        let Some(thumb) = self.handle(ui, track, content, view, scroll) else { return };
+        draw_rectangle(track.x, track.y, track.w, track.h, Color::new(0.0, 0.0, 0.0, 0.35));
+        let lit = self.grab.is_some() || ui.hover(thumb);
+        draw_rectangle(thumb.x + 2.0, thumb.y, thumb.w - 4.0, thumb.h, if lit { rgb8(230, 230, 240) } else { rgb8(160, 160, 175) });
+    }
+
+    /// The mouse handling of `update`, without drawing. Returns where the
+    /// thumb is, or None when there's nothing to scroll.
+    pub fn handle(&mut self, ui: &mut Ui, track: Rect, content: f32, view: f32, scroll: &mut f32) -> Option<Rect> {
+        let max = content - view;
+        if max <= 0.0 {
+            self.grab = None;
+            *scroll = 0.0;
+            return None;
+        }
+        let thumb_h = (track.h * view / content).max(36.0).min(track.h);
+        let travel = track.h - thumb_h;
+        let thumb = Rect::new(track.x, track.y + travel * (*scroll / max).clamp(0.0, 1.0), track.w, thumb_h);
+        match self.grab {
+            Some((y0, s0)) if ui.down => *scroll = s0 + (ui.mouse.y - y0) * max / travel.max(1.0),
+            Some(_) => self.grab = None,
+            None if ui.clicked(thumb) => self.grab = Some((ui.mouse.y, *scroll)),
+            None if ui.clicked(track) => *scroll += if ui.mouse.y < thumb.y { -view } else { view } * 0.8,
+            None => {}
+        }
+        *scroll = scroll.clamp(0.0, max);
+        Some(Rect::new(track.x, track.y + travel * (*scroll / max), track.w, thumb_h))
     }
 }
 
@@ -125,8 +173,75 @@ pub fn rgb8(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgba(r, g, b, 255)
 }
 
-pub fn luminance(c: Color) -> f32 {
-    0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+/// Titles on the light grey popups (`panel`): dark amber, 4.7:1.
+pub const TITLE_ON_LIGHT: Color = Color { r: 125.0 / 255.0, g: 65.0 / 255.0, b: 0.0, a: 1.0 };
+/// "Not quite" titles on the light popups: dark orange-red, 4.9:1.
+pub const WARN_ON_LIGHT: Color = Color { r: 140.0 / 255.0, g: 45.0 / 255.0, b: 5.0 / 255.0, a: 1.0 };
+/// Grey text on the dark grey of something locked, 5:1.
+pub const LOCKED_TEXT: Color = Color { r: 180.0 / 255.0, g: 180.0 / 255.0, b: 180.0 / 255.0, a: 1.0 };
+/// The light grey of `panel`.
+pub const PANEL: Color = Color { r: 198.0 / 255.0, g: 198.0 / 255.0, b: 198.0 / 255.0, a: 1.0 };
+/// The dark grey of `dark_panel`.
+pub const DARK_PANEL: Color = Color { r: 40.0 / 255.0, g: 40.0 / 255.0, b: 48.0 / 255.0, a: 1.0 };
+
+/// Near-black text, for light backgrounds.
+pub const DARK_TEXT: Color = Color { r: 18.0 / 255.0, g: 16.0 / 255.0, b: 10.0 / 255.0, a: 1.0 };
+/// Text on a greyed-out button. Inactive controls are exempt from the
+/// contrast minimum, but it's kept as readable as it can be while still
+/// looking switched off.
+const DISABLED_TEXT: Color = Color { r: 170.0 / 255.0, g: 170.0 / 255.0, b: 170.0 / 255.0, a: 1.0 };
+/// The contrast text must have against its background: WCAG AA for normal
+/// text (4.5:1), plus a little margin.
+pub const MIN_CONTRAST: f32 = 4.6;
+/// How dark a colour may be made so white text reads on it. Colours that
+/// would need more (bright yellows) keep their colour and get dark text.
+const MAX_DARKEN: f32 = 0.78;
+
+/// WCAG relative luminance.
+fn rel_lum(c: Color) -> f32 {
+    let lin = |v: f32| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// WCAG contrast ratio between two colours, from 1 (same) to 21 (black on white).
+pub fn contrast(a: Color, b: Color) -> f32 {
+    let (la, lb) = (rel_lum(a), rel_lum(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// `bg`, darkened just enough for white text to read on it, unless that would
+/// change it a lot (bright yellows and golds), in which case it stays as it is
+/// and gets dark text instead (see `text_on`).
+pub fn readable_bg(bg: Color) -> Color {
+    if contrast(bg, WHITE) >= MIN_CONTRAST {
+        return bg;
+    }
+    let mut f = 1.0;
+    while f > MAX_DARKEN && contrast(shade(bg, f), WHITE) < MIN_CONTRAST {
+        f -= 0.01;
+    }
+    let darker = shade(bg, f);
+    if contrast(darker, WHITE) >= MIN_CONTRAST || contrast(bg, DARK_TEXT) < MIN_CONTRAST {
+        // Mid-tones that dark text can't fix either keep darkening until white reads.
+        let mut f = f;
+        while contrast(shade(bg, f), WHITE) < MIN_CONTRAST {
+            f -= 0.01;
+        }
+        shade(bg, f)
+    } else {
+        bg
+    }
+}
+
+/// White or near-black, whichever reads better on `bg`.
+pub fn text_on(bg: Color) -> Color {
+    if contrast(bg, WHITE) >= contrast(bg, DARK_TEXT) { WHITE } else { DARK_TEXT }
+}
+
+/// A hovered button: moved away from its text colour, so hovering never makes
+/// the label harder to read.
+pub fn hover_shade(bg: Color, light_text: bool) -> Color {
+    if light_text { shade(bg, 0.86) } else { shade(bg, 1.12) }
 }
 
 /// A chunky Minecraft-style block: light top-left edge, dark bottom-right edge.
@@ -142,7 +257,7 @@ pub fn bevel(r: Rect, c: Color) {
 
 pub fn panel(r: Rect) {
     draw_rectangle(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0, BLACK);
-    draw_rectangle(r.x, r.y, r.w, r.h, rgb8(198, 198, 198));
+    draw_rectangle(r.x, r.y, r.w, r.h, PANEL);
     draw_rectangle(r.x, r.y, r.w, 3.0, WHITE);
     draw_rectangle(r.x, r.y, 3.0, r.h, WHITE);
     draw_rectangle(r.x, r.y + r.h - 3.0, r.w, 3.0, rgb8(85, 85, 85));
@@ -151,7 +266,7 @@ pub fn panel(r: Rect) {
 
 pub fn dark_panel(r: Rect) {
     draw_rectangle(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0, BLACK);
-    draw_rectangle(r.x, r.y, r.w, r.h, rgb8(40, 40, 48));
+    draw_rectangle(r.x, r.y, r.w, r.h, DARK_PANEL);
     draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, rgb8(90, 90, 105));
 }
 
@@ -210,6 +325,23 @@ pub fn wrap(s: &str, width: f32, size: f32) -> Vec<String> {
     lines
 }
 
+/// The biggest size from `size` down to `min` at which `s` fits in `width`
+/// on one line (`min` if it never does).
+pub fn fit_size(s: &str, width: f32, size: f32, min: f32) -> f32 {
+    let w = text_width(s, size);
+    if w <= width { size } else { (size * width / w).floor().max(min) }
+}
+
+/// Like `paragraph`, but each line is centred in `width`.
+pub fn centered_paragraph(s: &str, x: f32, y: f32, width: f32, size: f32, c: Color) -> f32 {
+    let lh = size * 1.3;
+    let lines = wrap(s, width, size);
+    for (i, l) in lines.iter().enumerate() {
+        text(l, x + (width - text_width(l, size)) / 2.0, y + i as f32 * lh, size, c);
+    }
+    lines.len() as f32 * lh
+}
+
 /// Draws wrapped text and returns the height it used.
 pub fn paragraph(s: &str, x: f32, y: f32, width: f32, size: f32, c: Color) -> f32 {
     let lh = size * 1.3;
@@ -242,9 +374,10 @@ pub fn star(cx: f32, cy: f32, r: f32, filled: bool) {
 }
 
 /// A small icon for each kind of code block (drawn with shapes).
-pub fn block_icon(kind: crate::program::Kind, x: f32, y: f32, s: f32, art: &crate::art::Art) {
+/// A block's icon in `ink` (the block's text colour, so it reads as well as the label).
+pub fn block_icon(kind: crate::program::Kind, x: f32, y: f32, s: f32, ink: Color, art: &crate::art::Art) {
     use crate::program::Kind::*;
-    let c = WHITE;
+    let c = ink;
     let m = vec2(x + s / 2.0, y + s / 2.0);
     match kind {
         Forward => {
@@ -275,6 +408,16 @@ pub fn block_icon(kind: crate::program::Kind, x: f32, y: f32, s: f32, art: &crat
         }
         Call => {
             text("f()", x - 2.0, y + s * 0.25, s * 0.62, c);
+        }
+        // A little box: a variable is a box that holds a number.
+        Set | Add => {
+            draw_rectangle_lines(x + 2.0, y + 4.0, s - 4.0, s - 6.0, 2.0, c);
+            let sign = if kind == Set { "=" } else { "+" };
+            text(sign, m.x - s * 0.18, y + s * 0.12, s * 0.8, c);
+        }
+        RepeatCount => {
+            draw_arc(m.x, m.y, 24, s * 0.33, 30.0, 3.0, 300.0, c);
+            text("n", m.x - s * 0.13, m.y - s * 0.3, s * 0.5, c);
         }
     }
 }

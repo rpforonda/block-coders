@@ -11,6 +11,12 @@ fn next_id() -> u32 {
 
 /// Programs that take more actions than this are assumed to be stuck.
 pub const MAX_ACTIONS: u32 = 600;
+/// The biggest number the `count` variable can hold. Adding past it stays at
+/// it, so no program (or edited save) can overflow it.
+pub const MAX_VALUE: u32 = 99;
+/// Changes to `count` allowed in one run, so a loop that only changes it
+/// (and never moves the miner) is caught like any other endless loop.
+const MAX_VAR_STEPS: u32 = 600;
 const MAX_CALL_DEPTH: usize = 100;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,11 +31,32 @@ pub enum Kind {
     IfElse,
     While,
     Call,
+    /// `set count to N`: puts a number in the `count` variable.
+    Set,
+    /// `add N to count`.
+    Add,
+    /// `repeat count times`: a REPEAT that reads its number from `count`.
+    RepeatCount,
 }
 
 impl Kind {
     pub fn is_container(self) -> bool {
-        matches!(self, Kind::Repeat | Kind::If | Kind::IfElse | Kind::While)
+        matches!(self, Kind::Repeat | Kind::If | Kind::IfElse | Kind::While | Kind::RepeatCount)
+    }
+
+    /// Blocks that read or change the `count` variable.
+    pub fn uses_count(self) -> bool {
+        matches!(self, Kind::Set | Kind::Add | Kind::RepeatCount)
+    }
+
+    /// The numbers a block's `count` field may hold, for blocks that have one.
+    pub fn number_range(self) -> Option<(u32, u32)> {
+        match self {
+            Kind::Repeat => Some((1, 20)),
+            Kind::Set => Some((0, 20)),
+            Kind::Add => Some((1, 9)),
+            _ => None,
+        }
     }
 
     pub fn palette_label(self) -> &'static str {
@@ -44,6 +71,9 @@ impl Kind {
             Kind::IfElse => "if / else",
             Kind::While => "while",
             Kind::Call => "call function",
+            Kind::Set => "set count",
+            Kind::Add => "add to count",
+            Kind::RepeatCount => "repeat count",
         }
     }
 
@@ -136,8 +166,22 @@ pub struct Node {
 }
 
 impl Node {
+    /// The words on the block, e.g. "repeat 3 times" or "add 1 to count".
+    pub fn label(&self) -> String {
+        match self.kind {
+            Kind::Repeat => format!("repeat {} times", self.count),
+            Kind::If | Kind::IfElse => format!("if {}", self.cond.label()),
+            Kind::While => format!("while {}", self.cond.label()),
+            Kind::Set => format!("set count to {}", self.count),
+            Kind::Add => format!("add {} to count", self.count),
+            Kind::RepeatCount => "repeat count times".to_string(),
+            k => k.palette_label().to_string(),
+        }
+    }
+
     pub fn new(kind: Kind, cond: Cond) -> Node {
-        Node { id: next_id(), kind, count: 3, cond, body: Vec::new(), els: Vec::new() }
+        let count = if kind == Kind::Add { 1 } else { 3 };
+        Node { id: next_id(), kind, count, cond, body: Vec::new(), els: Vec::new() }
     }
 }
 
@@ -174,18 +218,29 @@ impl Program {
 
     /// What this program would look like written in real Rust.
     pub fn to_rust(&self) -> Vec<String> {
+        let mut used = Vec::new();
+        kinds_used(&self.main, &mut used);
+        let mut in_func = Vec::new();
+        kinds_used(&self.func, &mut in_func);
+        // `count` lives in main. A function that uses it borrows it, as Rust requires.
+        let var = Var {
+            declared: used.iter().chain(&in_func).any(|k| k.uses_count()),
+            passed: in_func.iter().any(|k| k.uses_count()),
+            borrowed: false,
+        };
         let mut out = vec!["fn main() {".to_string()];
+        if var.declared {
+            out.push("    let mut count = 0;".to_string());
+        }
         if self.main.is_empty() {
             out.push("    // your code goes here!".to_string());
         }
-        gen_rust(&self.main, 1, &mut out);
+        gen_rust(&self.main, 1, var, &mut out);
         out.push("}".to_string());
-        let mut used = Vec::new();
-        kinds_used(&self.main, &mut used);
         if !self.func.is_empty() || used.contains(&Kind::Call) {
             out.push(String::new());
-            out.push("fn my_function() {".to_string());
-            gen_rust(&self.func, 1, &mut out);
+            out.push(if var.passed { "fn my_function(count: &mut u32) {" } else { "fn my_function() {" }.to_string());
+            gen_rust(&self.func, 1, Var { borrowed: true, ..var }, &mut out);
             out.push("}".to_string());
         }
         out
@@ -206,10 +261,25 @@ impl Program {
     }
 }
 
-fn gen_rust(list: &[Node], depth: usize, out: &mut Vec<String>) {
+/// How the Rust view writes the `count` variable.
+#[derive(Clone, Copy)]
+struct Var {
+    declared: bool,
+    /// The function takes `count` as `&mut u32`.
+    passed: bool,
+    /// Writing the function's body, where `count` is a reference (`*count`).
+    borrowed: bool,
+}
+
+fn gen_rust(list: &[Node], depth: usize, var: Var, out: &mut Vec<String>) {
     let pad = "    ".repeat(depth);
+    let count = if var.borrowed { "*count" } else { "count" };
     for n in list {
         let line = match n.kind {
+            Kind::Set => format!("{count} = {};", n.count),
+            Kind::Add => format!("{count} += {};", n.count),
+            Kind::RepeatCount => format!("for _ in 0..{count} {{"),
+            Kind::Call if var.passed => if var.borrowed { "my_function(count);" } else { "my_function(&mut count);" }.to_string(),
             Kind::Forward => "forward();".to_string(),
             Kind::TurnLeft => "turn_left();".to_string(),
             Kind::TurnRight => "turn_right();".to_string(),
@@ -222,10 +292,10 @@ fn gen_rust(list: &[Node], depth: usize, out: &mut Vec<String>) {
         };
         out.push(format!("{pad}{line}"));
         if n.kind.is_container() {
-            gen_rust(&n.body, depth + 1, out);
+            gen_rust(&n.body, depth + 1, var, out);
             if n.kind == Kind::IfElse {
                 out.push(format!("{pad}}} else {{"));
-                gen_rust(&n.els, depth + 1, out);
+                gen_rust(&n.els, depth + 1, var, out);
             }
             out.push(format!("{pad}}}"));
         }
@@ -245,6 +315,9 @@ fn ser(list: &[Node], s: &mut String) {
             Kind::If => format!("[I{}", n.cond.index()),
             Kind::IfElse => format!("[E{}", n.cond.index()),
             Kind::While => format!("[W{}", n.cond.index()),
+            Kind::Set => format!("S{}", n.count),
+            Kind::Add => format!("A{}", n.count),
+            Kind::RepeatCount => "[V0".to_string(),
         };
         s.push_str(&tok);
         s.push(' ');
@@ -293,6 +366,16 @@ fn parse_seq(toks: &[&str], i: &mut usize, depth: usize) -> Option<Vec<Node>> {
             "M" => simple(Kind::Mine),
             "P" => simple(Kind::Place),
             "C" => simple(Kind::Call),
+            // `S5` = set count to 5, `A1` = add 1 to count. The number must be
+            // one the editor could have made.
+            _ if t.starts_with(['S', 'A']) => {
+                let kind = if t.starts_with('S') { Kind::Set } else { Kind::Add };
+                let (lo, hi) = kind.number_range()?;
+                let n: u32 = t.get(1..)?.parse().ok().filter(|n| (lo..=hi).contains(n))?;
+                let mut node = Node::new(kind, Cond::PathAhead);
+                node.count = n;
+                Some(node)
+            }
             _ if t.starts_with('[') => {
                 // `get` instead of slicing: a multi-byte character here must not panic.
                 let arg: usize = t.get(2..)?.parse().ok()?;
@@ -301,11 +384,14 @@ fn parse_seq(toks: &[&str], i: &mut usize, depth: usize) -> Option<Vec<Node>> {
                     "I" => Kind::If,
                     "E" => Kind::IfElse,
                     "W" => Kind::While,
+                    "V" if arg == 0 => Kind::RepeatCount,
                     _ => return None,
                 };
                 let mut n = Node::new(kind, Cond::PathAhead);
                 if kind == Kind::Repeat {
                     n.count = arg.clamp(1, 99) as u32;
+                } else if kind == Kind::RepeatCount {
+                    // No number of its own: it reads `count` when it runs.
                 } else {
                     n.cond = *ALL_CONDS.get(arg)?;
                 }
@@ -333,7 +419,11 @@ fn parse_seq(toks: &[&str], i: &mut usize, depth: usize) -> Option<Vec<Node>> {
 #[derive(Clone, Copy, Debug)]
 enum Op {
     Act(Action, u32),
+    Set(u32, u32),
+    Add(u32, u32),
     Push(u32),
+    /// Pushes `count` as a loop counter, or jumps past the loop if it's 0.
+    PushCount(usize, u32),
     Loop(usize),
     JumpIfNot(Cond, usize, u32),
     Jump(usize),
@@ -350,6 +440,17 @@ fn compile(list: &[Node], ops: &mut Vec<Op>) {
         }
         match n.kind {
             Kind::Call => ops.push(Op::Call(n.id)),
+            Kind::Set => ops.push(Op::Set(n.count, n.id)),
+            Kind::Add => ops.push(Op::Add(n.count, n.id)),
+            Kind::RepeatCount => {
+                let j = ops.len();
+                ops.push(Op::PushCount(0, n.id));
+                let top = ops.len();
+                compile(&n.body, ops);
+                ops.push(Op::Loop(top));
+                let end = ops.len();
+                ops[j] = Op::PushCount(end, n.id);
+            }
             Kind::Repeat => {
                 ops.push(Op::Push(n.count.max(1)));
                 let top = ops.len();
@@ -391,6 +492,8 @@ fn compile(list: &[Node], ops: &mut Vec<Op>) {
 pub enum Step {
     /// Do this action; the id is the block that asked for it.
     Act(Action, u32),
+    /// A block changed the `count` variable (nothing moves, but it's shown).
+    Var(u32),
     /// The program reached its end.
     Done,
     /// The program got stuck; the id (if any) is the block to blame.
@@ -405,6 +508,9 @@ pub struct Vm {
     calls: Vec<usize>,
     pub actions: u32,
     last_block: Option<u32>,
+    /// The `count` variable. Every run starts it at 0.
+    pub count: u32,
+    var_steps: u32,
 }
 
 impl Vm {
@@ -415,7 +521,7 @@ impl Vm {
         let func_start = ops.len();
         compile(&p.func, &mut ops);
         ops.push(Op::Ret);
-        Vm { ops, func_start, pc: 0, counters: Vec::new(), calls: Vec::new(), actions: 0, last_block: None }
+        Vm { ops, func_start, pc: 0, counters: Vec::new(), calls: Vec::new(), actions: 0, last_block: None, count: 0, var_steps: 0 }
     }
 
     /// Runs the program until it wants to do the next action.
@@ -447,9 +553,35 @@ impl Vm {
                     }
                     return Step::Act(a, id);
                 }
+                Op::Set(n, id) | Op::Add(n, id) => {
+                    let set = matches!(self.ops[self.pc], Op::Set(..));
+                    self.pc += 1;
+                    self.last_block = Some(id);
+                    self.var_steps += 1;
+                    if self.var_steps > MAX_VAR_STEPS {
+                        return Step::Error(
+                            format!(
+                                "Your program changed count more than {MAX_VAR_STEPS} times! \
+                                 A loop might be going round forever. Look for the bug."
+                            ),
+                            Some(id),
+                        );
+                    }
+                    self.count = if set { n } else { self.count.saturating_add(n) }.min(MAX_VALUE);
+                    return Step::Var(id);
+                }
                 Op::Push(n) => {
                     self.counters.push(n);
                     self.pc += 1;
+                }
+                Op::PushCount(end, id) => {
+                    self.last_block = Some(id);
+                    if self.count == 0 {
+                        self.pc = end;
+                    } else {
+                        self.counters.push(self.count);
+                        self.pc += 1;
+                    }
                 }
                 Op::Loop(top) => {
                     let c = self.counters.last_mut().expect("loop counter");
@@ -497,6 +629,7 @@ pub fn simulate(p: &Program, mut w: World) -> Result<(), String> {
                 Outcome::Won => return Ok(()),
                 Outcome::Fail(f) => return Err(f.message()),
             },
+            Step::Var(_) => {}
             Step::Done => return Err(w.unfinished_message()),
             Step::Error(msg, _) => return Err(msg),
         }

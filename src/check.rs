@@ -99,6 +99,8 @@ pub struct Run {
     pub world: World,
     pub end: End,
     pub actions: Vec<Action>,
+    /// What the `count` variable held at the end.
+    pub count: u32,
 }
 
 /// Runs a program to the end, like pressing RUN without the animation.
@@ -129,11 +131,12 @@ pub fn run(p: &Program, mut world: World) -> Run {
                     }
                 }
             }
+            Step::Var(_) => {}
             Step::Done => break End::Unfinished,
             Step::Error(..) => break End::Stuck,
         }
     };
-    Run { world, end, actions }
+    Run { world, end, actions, count: vm.count }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +281,7 @@ impl CheckScreen {
         let r = Rect::new(VW / 2.0 - 380.0, 150.0, 760.0, 470.0);
         panel(r);
         draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 80.0, 80.0, WHITE);
-        shadow_text(&format!("World {} Check", self.chapter + 1), r.x + 124.0, r.y + 44.0, 34.0, rgb8(255, 230, 90));
+        text(&format!("World {} Check", self.chapter + 1), r.x + 124.0, r.y + 44.0, 34.0, TITLE_ON_LIGHT);
         let concept = CHAPTERS[self.chapter].concept.to_lowercase();
         let unlock = if self.chapter + 1 == CHAPTERS.len() - 1 {
             format!(
@@ -456,8 +459,8 @@ impl CheckScreen {
         let r = Rect::new(VW / 2.0 - 360.0, 130.0, 720.0, 520.0);
         panel(r);
         let title = if passed { "You passed!" } else { "Almost there!" };
-        text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 48.0), 44.0, if passed { rgb8(255, 215, 40) } else { rgb8(255, 160, 90) }, true);
-        text_centered(&format!("{score} / {ASKED}"), Rect::new(r.x, r.y + 80.0, r.w, 70.0), 64.0, WHITE, true);
+        text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 48.0), 44.0, if passed { TITLE_ON_LIGHT } else { WARN_ON_LIGHT }, false);
+        text_centered(&format!("{score} / {ASKED}"), Rect::new(r.x, r.y + 80.0, r.w, 70.0), 64.0, DARK_TEXT, false);
         let next = self.chapter + 1;
         let next_open = progress.world_open(next);
         let body = if passed {
@@ -589,17 +592,13 @@ pub fn draw_program(p: &Program, area: Rect, art: &Art) {
                 let color = kind_color(n.kind);
                 bevel(r, color);
                 let icon = (row - 12.0).max(10.0);
-                crate::ui::block_icon(n.kind, r.x + 4.0, r.y + (r.h - icon) / 2.0, icon, art);
-                let label = match n.kind {
-                    Kind::Repeat => format!("repeat {} times", n.count),
-                    Kind::If | Kind::IfElse => format!("if {}", n.cond.label()),
-                    Kind::While => format!("while {}", n.cond.label()),
-                    k => k.palette_label().to_string(),
-                };
-                let dark = luminance(color) > 0.8;
+                let tc = text_on(color);
+                let dark = tc != WHITE;
+                crate::ui::block_icon(n.kind, r.x + 4.0, r.y + (r.h - icon) / 2.0, icon, tc, art);
+                let label = n.label();
                 let ty = r.y + (r.h - size) / 2.0;
                 if dark {
-                    text(&label, r.x + icon + 10.0, ty, size, rgb8(40, 30, 0));
+                    text(&label, r.x + icon + 10.0, ty, size, tc);
                 } else {
                     shadow_text(&label, r.x + icon + 10.0, ty, size, WHITE);
                 }

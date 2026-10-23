@@ -15,6 +15,9 @@ installing, see the [README](../README.md).
 7. [Curriculum and level design](#curriculum-and-level-design)
    - [World Checks](#world-checks)
 8. [The block editor](#the-block-editor)
+   - [Small screens](#small-screens)
+   - [Scrolling](#scrolling)
+   - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
 11. [Packaging](#packaging)
@@ -70,7 +73,7 @@ flowchart TD
     editor["editor.rs<br/>block editor"]
     program["program.rs<br/>blocks, compiler, VM,<br/>Rust codegen, save format"]
     world["world.rs<br/>tiles, rules, conditions,<br/>random map generation"]
-    levels["levels.rs<br/>60 levels as data"]
+    levels["levels.rs<br/>66 levels as data"]
     save["save.rs<br/>players + progress files"]
     art["art.rs / sound.rs<br/>procedural pixel art + sfx"]
     ui["ui.rs<br/>buttons, text, panels"]
@@ -156,9 +159,17 @@ blocks (tree)  ──compile──▶  bytecode  ──Vm::next──▶  one ac
 
 A program is two lists of `Node`s: `main` and `func` (one user-defined
 function). Each node has a `kind` (forward, turn left/right, mine, place, call,
-repeat, if, if/else, while), and also a `count` for repeat, a `cond` for
-if/while, a `body`, an `els` (else part), and a unique `id`. The id is how the
-running block gets highlighted.
+repeat, if, if/else, while, set count, add to count, repeat count), and also a
+`count` (the number on a repeat, set or add block), a `cond` for if/while, a
+`body`, an `els` (else part), and a unique `id`. The id is how the running
+block gets highlighted.
+
+**The `count` variable.** There is exactly one variable, and its name is fixed,
+so kids never type a name and nothing they make can name anything else. It
+holds a whole number from 0 to `MAX_VALUE` (99). SET puts a number in it, ADD
+adds to it (stopping at 99, so it can't overflow), and REPEAT COUNT TIMES reads
+it. Every run starts it at 0. MAIN and the function share it, which the Rust
+view shows by passing `&mut count` to the function.
 
 ### Compiler and VM
 
@@ -168,6 +179,8 @@ running block gets highlighted.
 |---|---|
 | `Act(action, id)` | Do an action (the VM pauses here and hands it to the game) |
 | `Push(n)` / `Loop(top)` | Repeat: push a counter; at the end, count down and jump back |
+| `PushCount(end, id)` | Repeat count times: push `count` as the counter, or skip the loop if it's 0 |
+| `Set(n, id)` / `Add(n, id)` | Change `count`. The VM pauses here too (`Step::Var`) so the block lights up and the count box shows the new number |
 | `JumpIfNot(cond, target, id)` | if / while test |
 | `Jump(target)` | else-skip / loop back |
 | `Call(id)` / `Ret` | Call the function / return |
@@ -205,8 +218,9 @@ of each level's `solution` field:
 C C F / F L M R            main: call, call, forward   function: forward, left, mine, right
 ```
 
-The tokens are `F L R M P C`, and `[R<n>`, `[I<c>`, `[E<c>`, `[W<c>` open a
-repeat, if, if/else or while, where `<c>` is an index into `ALL_CONDS`. `|`
+The tokens are `F L R M P C`, `S<n>` (set count to n) and `A<n>` (add n to
+count), and `[R<n>`, `[I<c>`, `[E<c>`, `[W<c>`, `[V0` open a repeat, if,
+if/else, while or repeat-count-times, where `<c>` is an index into `ALL_CONDS`. `|`
 separates if/else branches, `]` closes a block, and `/` separates main from
 the function.
 
@@ -228,11 +242,11 @@ so a kid can debug against a world that stays put.
 
 ## Curriculum and level design
 
-Levels are data (`levels.rs`). They're grouped into six chapters. Each chapter
+Levels are data (`levels.rs`). They're grouped into seven chapters. Each chapter
 starts with an intro level (enforced by a test) and ramps up:
 
 ```
-Sequences (9) → Loops (11) → Functions (8) → If/Else (14) 🎲 → While & algorithms (12) 🎲 → Master (6) 🎲
+Sequences (9) → Loops (11) → Functions (8) → If/Else (14) 🎲 → While & algorithms (12) 🎲 → Variables (6) 🎲 → Master (6) 🎲
 ```
 
 Inside a chapter, difficulty grows by: more steps → mixing two concepts →
@@ -244,6 +258,13 @@ features at once. Examples:
 - **If/Else:** one maybe-stone → two → a whole corridor → lava → stone *or*
   water (two `if`s) → stone *or* lava (`if/else`) → forks (path sensing) →
   diamonds on both sides → `if` inside functions.
+- **Variables:** put a number in the box and repeat that many times → use it
+  twice → ADD makes stairs that grow 1, 2, 3, 4 → a growing spiral of emeralds
+  → count steps with WHILE and use the number later (Echo Hall) → count stones
+  while mining. Each level is built so the variable is needed: the fixed ones
+  leave out the numbered REPEAT and set a block limit, and in the changing ones
+  the portal is somewhere no sensor can find, so only counting (or a sweep too
+  long for the block limit) gets there. Tests check both.
 - **While:** random-length wall → random-length tunnels and lava → roads that
   only turn right → spirals → roads that turn both ways → mazes → mazes with
   hazards.
@@ -276,8 +297,10 @@ the next world. Retries are unlimited.
 - **Unlocking:** world *w* opens when Check *w*−1 is passed. Saves from before
   World Checks keep every world they had already reached, and can still take
   the checks they skipped. The last world (Nether Fortress) needs **all** checks
-  passed, even for those older saves. A check opens once the world's last level
-  is beaten. Parent mode (Ctrl+U) opens everything.
+  passed, even for those older saves. One exception: the Counting Caverns world
+  (and its check) came later, so a player who had already reached the Nether
+  Fortress and passed the five checks there were then keeps it. A check opens
+  once the world's last level is beaten. Parent mode (Ctrl+U) opens everything.
 - `check.rs` has the screen, plus read-only drawing of programs and maps. Map
   squares that change between versions show their symbol with a legend
   ("? = stone or empty").
@@ -351,6 +374,70 @@ drag blocks inside the program to reorder them).
   press can start a drag, and their edits are collected as an `Edit` value and
   applied after drawing, so the tree is never changed while it's being read.
 
+### Small screens
+
+The game draws on a virtual canvas. On a screen where the desktop's 1280x800
+fits at 80% or more, nothing changes: it's scaled to fit as before. Below that,
+shrinking it would make text 6-9pt on a phone, so the **play screen** gets a
+canvas the shape of the screen at 80% instead (`layout::canvas`), and
+`layout::Layout` places everything for it. The other screens (title, players,
+level select, World Check) are still 1280x800 and scaled: they're next.
+
+- **Wide** (anything wider than tall: desktops, tablets, phones held
+  sideways): the desktop's three columns, resized. Under 1100 wide the blocks
+  and program columns are a little slimmer. At 1280x800 it's exactly the old
+  layout (a test checks every rectangle).
+- **Tall** (phones held upright): the world on top, then the info bar and Bit,
+  then blocks and program side by side, with RUN / STEP / RESET / Speed along
+  the bottom. While a program runs, the blocks step aside and the program fills
+  the width under the world, so kids can watch the running block and the
+  miner together. RESET brings the blocks back. Hint and Goal stack under Bit,
+  so the message gets the full height.
+- **The canvas is never shorter than 520 or narrower than 440.** Phones held
+  sideways (about 375-430 points tall) are shrunk to fit that, so their text is
+  about 14pt rather than 15. Screens under 360 points wide (older than today's
+  phones) are best effort: everything fits, but panels are cramped.
+- Text that might not fit steps down a little, never below 16px: titles,
+  palette labels, Bit's long messages, and the Rust view (down to 11px, so the
+  widest line fits). The info bar shortens its labels when narrow, and popups
+  shrink to the canvas and stack their buttons when narrow.
+- The guided tour's bubble goes beside its spot when there's room, else above
+  or below it. In a browser, `web/storage.js` reports whether the screen is a
+  touch screen (`matchMedia('(pointer: coarse)')`), so the tour says "tap"
+  from the first step. The plugin's version is now 2.
+- `BC_WINDOW=390x844` (debug builds) opens a phone-sized window, for the
+  screenshot autopilot and for trying layouts on the desktop.
+
+**How the layout was chosen.** TypeSafe compared arrangements for each screen
+shape: stacked, tabs, world-and-program with a blocks drawer, and two hybrids.
+It judged them for an 8-12 year old new to computers, given real sizes at a
+readable scale (`target/pedagogy-eval/mobile/`, not committed). Tabs won its
+"easiest overall" vote on upright phones (0.64), but scored 0.34 of 2 on
+watching the miner and the running block together, which is how STEP
+debugging is taught. Stacked-with-run-mode won the vote once the hybrids were
+added (0.66), with 1.96 of 2 on watching both and 1.22 on findability.
+Tabs-that-split-while-running was close (1.88 and 1.37). We took
+stacked-with-run-mode: nothing is ever hidden behind a tab, and the blocks stay
+left of the program as on desktop, so lessons and the tour still read right.
+Columns won for sideways phones and tablets. Re-scored as built (with real
+sizes), upright phones get 1.78 for watching both and 1.31 for findability;
+sideways phones 1.44 and 1.03 (only 4 blocks show at once). No single part was
+judged too small (all at or under 0.53). TypeSafe also picked the short label
+"Show code" for upright phones.
+
+### Scrolling
+
+The blocks palette and the program (MAIN and FUNCTION) both scroll when they
+don't fit, with the mouse wheel or a scrollbar (`ui::Scrollbar`). The
+scrollbar can be dragged, or clicked above or below the thumb to move a page,
+so it works without a wheel too: touch screens, some trackpads. It's 14 pixels
+wide so a finger can grab it, and it only appears when there's something to
+scroll. Rows are never drawn half-hidden. The palette scrolls a whole block at
+a time, and the program skips rows that are partly out of view. RUN, STEP,
+RESET and the speed button have their own panel under the palette, so no block
+can end up behind them. A test checks the two panels never overlap and that
+the biggest palette really needs (and gets) scrolling.
+
 ### Undo and redo
 
 `Play` keeps two stacks of whole-program snapshots (programs are tiny, so
@@ -363,6 +450,29 @@ solution" shortcut. Undo and Redo swap versions between the stacks and set a
 flag so the swap itself isn't recorded. History holds 100 steps and lasts while
 the level is open.
 
+### The guided tour
+
+The first time a player opens level 1 (an empty program), `tour.rs` runs a
+9-step tour instead of the intro popup. It covers what clicking or tapping is,
+the world, blocks, the program, STEP/RESET, Hint/Goal, Help and RUN.
+
+- **One spot at a time.** Each step names a `Spot`, and `play.rs` maps it to a
+  screen rectangle using the same constants that draw the buttons, so the
+  highlight can't drift from the real button. Everything else is dimmed.
+- **Clicks are gated, not faked.** At the start of the frame, a click outside
+  the spot is taken away from the screen and handed back only to the tour's
+  own NEXT and *Skip tour* buttons. Right-clicks and keyboard shortcuts are off
+  during the tour (Escape skips it). The pointing hand is drawn, not real input.
+- **Steps finish on real actions** (`Wait`): pressing NEXT, the program having
+  1 or 4 blocks, or RUN starting. The tour ends when RUN starts, before the
+  victory popup.
+- **Touch screens** get "tap" instead of "click", and their own first step.
+- **Nothing is saved.** The tour shows whenever level 1 opens with an empty
+  program, and level 1's Help popup has *Show me around*. No new save data.
+- Tests check that the tour can be finished, that it matches level 1, that no
+  bubble covers its spot, and the touch wording. `BC_TOUR=1` keeps the tour up
+  in the screenshot autopilot so `BC_INPUT` can click through it.
+
 **Following the running block:** while a program runs, the editor switches to
 the tab (MAIN or FUNCTION) that holds the highlighted block. It does this
 **only when the highlighted block changes**. An earlier version switched every
@@ -374,6 +484,16 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   `Camera2D` plus a letterbox viewport. Any window size, tiling window managers
   and odd aspect ratios all work. Mouse positions are converted back into
   virtual coordinates.
+- **Readable colours (WCAG AA, 4.5:1).** Buttons and blocks don't pick their
+  text colour by eye. `ui::readable_bg` darkens a colour just enough for white
+  text (never below 78% brightness). Colours that would need more, the bright
+  yellows like Hint, World Check, and REPEAT / WHILE, keep their colour and get
+  near-black text instead (`ui::text_on`); block icons follow the label. Hover
+  states move away from the text colour, so hovering never lowers contrast.
+  Titles on the light popups use `TITLE_ON_LIGHT` / `WARN_ON_LIGHT` instead of
+  yellow, and locked items use `LOCKED_TEXT`. Tests check every colour on a
+  grid, every block, every world's tiles and the popup titles. (Before this, the
+  Hint button was white on gold at 2.5:1, and REPEAT blocks at 2.1:1.)
 - **Sharp text when scaled.** `ui::text` renders fonts at the real on-screen
   pixel size (`font_size × scale`, `font_scale = 1/scale`), so text stays
   sharp at any window size. macroquad multiplies by the screen's pixel density
@@ -471,7 +591,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `dynamic_levels_cannot_be_hardcoded` | For each dynamic level, replaying the exact moves that won one world fails in some other world |
 | `shortcuts_fail_somewhere` | Specific tempting shortcuts fail (e.g. "mine everything", road-following on a maze) |
 | `solutions_only_use_available_conditions` | Solutions only use conditions the kid can pick in that level |
-| `level_list_is_sane` | 60 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
+| `level_list_is_sane` | 66 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
@@ -523,10 +643,11 @@ screenshots don't show real players' names.
 | macroquad | Bevy, ggez, egui | Small, fast to compile, simple immediate-mode 2D, built-in audio, and it builds for the web. Bevy's ECS is overkill for a grid game. |
 | Click-to-insert *and* drag-and-drop | Only one of them | Clicking is easier for young kids and trackpads. Dragging is faster and is what Scratch users expect. Both use the same slot system. |
 | Undo by whole-program snapshots | An undo entry per edit type | One generic check at the end of the frame can't miss a kind of edit, and programs are tiny. |
-| Fixed 1280×800 virtual canvas | Responsive layout | One layout to design and test, and it works at any window size via letterboxing. |
+| Fixed 1280×800 virtual canvas, reshaped only on small screens | Fully responsive layout | One desktop layout to design and test. Below 80% scale the play screen switches to a screen-shaped canvas with two tested layouts (wide and tall), so phones get readable text. |
 | Procedural assets | Image/sound files | A single self-contained binary, nothing to lose or load, and the art is itself code kids can explore. |
 | Bytecode VM that pauses at actions | Walking the tree with recursion | Stepping, highlighting, animation and instant simulation all share one path. Infinite loops are easy to detect. |
 | One function (no parameters) | Several named functions | Enough to teach reuse at this age. More would need naming UI. |
+| One variable with a fixed name, whole numbers 0–99 | Named variables, text, negative numbers | One box is enough to teach "store, change, use". No typing means no naming UI and nothing a child types ever becomes code. The bounds mean no overflow, and REPEAT COUNT stays small. |
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
@@ -538,11 +659,13 @@ screenshots don't show real players' names.
   exist yet. A GitHub Actions matrix could build them.
 - **Web version.** Planned; see [WEB.md](WEB.md). The main change is moving
   saves to browser storage.
-- **Touch screens.** Taps work as clicks, but typing a player name needs a
-  keyboard, and the 1280×800 layout is small on phones.
+- **Touch screens.** Taps work as clicks, and the play screen reshapes for
+  phones (see [Small screens](#small-screens)). The title, players, level
+  select and World Check screens are still 1280×800 scaled down, so they're
+  small on phones.
 - **Accessibility.** No screen reader support. Colors are bold and paired with
   icons and text labels, but they haven't been checked for color blindness.
-- **One function, no parameters, no variables.** Possible next concepts:
+- **One function, no parameters, one variable.** Possible next concepts:
   counters ("repeat until you have 3 blocks"), parameters ("dig(n)"), or a
   second function.
 - **Level authoring needs Rust.** Levels are compiled in. Loading levels from
