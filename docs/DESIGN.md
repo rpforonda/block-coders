@@ -35,7 +35,7 @@ installing, see the [README](../README.md).
   shouldn't be solvable without `if`.
 - Spark interest in real development: show that blocks are code and that the
   game itself is code (*Show Rust code*, editable text-map levels).
-- Be easy to install and run: one small binary, no asset files, no account,
+- Be easy to install and run: one small binary (the fonts are built in), no account,
   works offline.
 
 **Non-goals**
@@ -689,6 +689,7 @@ screenshots don't show real players' names.
 | Undo by whole-program snapshots | An undo entry per edit type | One generic check at the end of the frame can't miss a kind of edit, and programs are tiny. |
 | Fixed 1280×800 virtual canvas, reshaped only on small screens | Fully responsive layout | One desktop layout to design and test. Below 80% scale the play screen switches to a screen-shaped canvas with two tested layouts (wide and tall), so phones get readable text. |
 | Procedural assets | Image/sound files | A single self-contained binary, nothing to lose or load, and the art is itself code kids can explore. |
+| Atkinson Hyperlegible (built in) | macroquad's built-in bitmap font, Andika, Lexend, a pixel font | Legibility for young and weak readers comes first. TypeSafe scored it 1.95/2 for 8-year-olds reading hints and labels (the old font 0.28) and best at telling l/1/I and 0/O apart in code (0.71, the old font 0.13). A pixel font matched the art better (0.88) but read worse (1.09). Its Mono is used for the Rust view, which lines letters up. |
 | Bytecode VM that pauses at actions | Walking the tree with recursion | Stepping, highlighting, animation and instant simulation all share one path. Infinite loops are easy to detect. |
 | One function (no parameters) | Several named functions | Enough to teach reuse at this age. More would need naming UI. |
 | One variable with a fixed name, whole numbers 0–99 | Named variables, text, negative numbers | One box is enough to teach "store, change, use". No typing means no naming UI and nothing a child types ever becomes code. The bounds mean no overflow, and REPEAT COUNT stays small. |

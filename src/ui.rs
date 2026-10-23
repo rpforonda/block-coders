@@ -20,10 +20,38 @@ fn scale() -> f32 {
     f32::from_bits(SCALE.load(Ordering::Relaxed))
 }
 
+/// Which font to draw in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Face {
+    /// Atkinson Hyperlegible: everything kids read.
+    Text,
+    /// Atkinson Hyperlegible Mono: the Rust code view, which lines letters up.
+    Code,
+}
+
 thread_local! {
-    /// The (character, rasterized size) glyphs macroquad has cached so far. It
-    /// never forgets one, and all text goes through `text` and `text_width`.
-    static CACHED: RefCell<HashSet<(char, u16)>> = RefCell::new(HashSet::new());
+    /// The (font, character, rasterized size) glyphs macroquad has cached so
+    /// far. It never forgets one, and all text goes through `text`,
+    /// `text_width`, `code_text` and `code_width`.
+    static CACHED: RefCell<HashSet<(Face, char, u16)>> = RefCell::new(HashSet::new());
+    /// The two fonts, once loaded (see `load_fonts`).
+    static FONTS: RefCell<Option<(Font, Font)>> = const { RefCell::new(None) };
+}
+
+/// Loads the fonts: Atkinson Hyperlegible (Braille Institute), designed so
+/// letters never look alike, and its Mono for code. Both are SIL Open Font
+/// License (assets/fonts/). Chosen with TypeSafe for legibility (docs/DESIGN.md).
+/// Until this runs (and in tests), text uses macroquad's built-in font.
+pub fn load_fonts() {
+    let text = load_ttf_font_from_bytes(include_bytes!("../assets/fonts/AtkinsonHyperlegible-Regular.ttf"));
+    let code = load_ttf_font_from_bytes(include_bytes!("../assets/fonts/AtkinsonHyperlegibleMono.ttf"));
+    if let (Ok(t), Ok(c)) = (text, code) {
+        FONTS.set(Some((t, c)));
+    }
+}
+
+fn with_font<R>(face: Face, f: impl FnOnce(Option<&Font>) -> R) -> R {
+    FONTS.with_borrow(|fonts| f(fonts.as_ref().map(|(t, c)| if face == Face::Code { c } else { t })))
 }
 
 /// macroquad 0.4.16 keeps glyphs in one font atlas texture. When a new glyph
@@ -36,11 +64,11 @@ thread_local! {
 /// and clear miniquad's bindings, then cache the whole string before any of it
 /// is drawn. Text that's already cached (nearly all of it, after the first
 /// frames) costs a set lookup.
-fn cache_glyphs(s: &str, font_size: u16, font_scale: f32) {
+fn cache_glyphs(face: Face, s: &str, font_size: u16, font_scale: f32) {
     let px = (font_size as f32 * screen_dpi_scale()).ceil() as u16; // as macroquad rasterizes it
     let fresh = CACHED.with_borrow_mut(|cached| {
         let before = cached.len();
-        cached.extend(s.chars().map(|c| (c, px)));
+        cached.extend(s.chars().map(|c| (face, c, px)));
         cached.len() != before
     });
     if fresh {
@@ -49,7 +77,7 @@ fn cache_glyphs(s: &str, font_size: u16, font_scale: f32) {
         let mut gl = unsafe { get_internal_gl() };
         gl.flush();
         gl.quad_context.commit_frame();
-        measure_text(s, None, font_size, font_scale);
+        with_font(face, |font| measure_text(s, font, font_size, font_scale));
     }
 }
 
@@ -273,19 +301,23 @@ pub fn dark_panel(r: Rect) {
 /// Draws text with its top-left corner at (x, y). Text is rendered at the real
 /// screen resolution so it stays sharp when the window is scaled.
 pub fn text(s: &str, x: f32, y: f32, size: f32, c: Color) {
+    draw_in(Face::Text, s, x, y, size, c);
+}
+
+/// Like `text`, in the monospaced code font.
+pub fn code_text(s: &str, x: f32, y: f32, size: f32, c: Color) {
+    draw_in(Face::Code, s, x, y, size, c);
+}
+
+/// How far below the top of a line its baseline sits, as a share of the size.
+const BASELINE: f32 = 0.78;
+
+fn draw_in(face: Face, s: &str, x: f32, y: f32, size: f32, c: Color) {
     let (font_size, font_scale) = font_params(size);
-    cache_glyphs(s, font_size, font_scale);
-    draw_text_ex(
-        s,
-        x,
-        y + size * 0.72,
-        TextParams {
-            font_size,
-            font_scale,
-            color: c,
-            ..Default::default()
-        },
-    );
+    cache_glyphs(face, s, font_size, font_scale);
+    with_font(face, |font| {
+        draw_text_ex(s, x, y + size * BASELINE, TextParams { font, font_size, font_scale, color: c, ..Default::default() });
+    });
 }
 
 pub fn shadow_text(s: &str, x: f32, y: f32, size: f32, c: Color) {
@@ -295,9 +327,17 @@ pub fn shadow_text(s: &str, x: f32, y: f32, size: f32, c: Color) {
 }
 
 pub fn text_width(s: &str, size: f32) -> f32 {
+    width_in(Face::Text, s, size)
+}
+
+pub fn code_width(s: &str, size: f32) -> f32 {
+    width_in(Face::Code, s, size)
+}
+
+fn width_in(face: Face, s: &str, size: f32) -> f32 {
     let (font_size, font_scale) = font_params(size);
-    cache_glyphs(s, font_size, font_scale);
-    measure_text(s, None, font_size, font_scale).width
+    cache_glyphs(face, s, font_size, font_scale);
+    with_font(face, |font| measure_text(s, font, font_size, font_scale).width)
 }
 
 pub fn text_centered(s: &str, r: Rect, size: f32, c: Color, shadow: bool) {
@@ -329,6 +369,12 @@ pub fn wrap(s: &str, width: f32, size: f32) -> Vec<String> {
 /// on one line (`min` if it never does).
 pub fn fit_size(s: &str, width: f32, size: f32, min: f32) -> f32 {
     let w = text_width(s, size);
+    if w <= width { size } else { (size * width / w).floor().max(min) }
+}
+
+/// `fit_size`, in the code font.
+pub fn fit_code_size(s: &str, width: f32, size: f32, min: f32) -> f32 {
+    let w = code_width(s, size);
     if w <= width { size } else { (size * width / w).floor().max(min) }
 }
 

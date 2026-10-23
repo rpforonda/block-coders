@@ -30,6 +30,9 @@ mkdir -p "$out"
 cp "$bin" "$out/block-coders"
 "$bin" --write-icon "$out/block-coders.png"
 cp packaging/block-coders.desktop packaging/install.sh packaging/uninstall.sh packaging/README.txt "$out/"
+# The fonts are built into the game; their license travels with it.
+mkdir -p "$out/licenses"
+cp assets/fonts/OFL-*.txt "$out/licenses/"
 chmod 755 "$out/install.sh" "$out/uninstall.sh" "$out/block-coders"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 
