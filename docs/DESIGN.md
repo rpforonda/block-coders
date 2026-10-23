@@ -421,16 +421,24 @@ rectangles (a test checks them).
   then blocks and program side by side, with RUN / STEP / RESET / Speed along
   the bottom. While a program runs, the blocks step aside and the program fills
   the width under the world, so kids can watch the running block and the
-  miner together. RESET brings the blocks back. Hint and Goal stack under Bit,
-  so the message gets the full height.
+  miner together. The moment it stops (it finished, crashed, or won and the
+  popup is up), the blocks come back, so "Add more blocks" can be followed
+  straight away. They used to wait for RESET, which nothing on screen pointed
+  to. TypeSafe chose this over RESET-only and a "Blocks" button: finding the
+  way back 1.87 of 2, against 0.27 and 0.75, and seeing the bug while fixing
+  it 1.72, against 1.18 and 0.38 (`target/pedagogy-eval/blocks-back/`). Hint
+  and Goal stack under Bit, so the message gets the full height.
 - **The canvas is never shorter than 520 or narrower than 440.** Phones held
   sideways (about 375-430 points tall) are shrunk to fit that, so their text is
   about 14pt rather than 15. Screens under 360 points wide (older than today's
   phones) are best effort: everything fits, but panels are cramped.
 - Text that might not fit steps down a little, never below 16px: titles,
   palette labels, Bit's long messages, and the Rust view (down to 11px, so the
-  widest line fits). The info bar shortens its labels when narrow, and popups
-  shrink to the canvas and stack their buttons when narrow.
+  widest line fits), and RUN AGAIN (down to 20px). The info bar shortens its
+  labels when narrow, and popups shrink to the canvas and stack their buttons
+  when narrow. Where any speed's label is too wide for the Speed button, every
+  speed goes on a second line under "Speed:", so the label keeps its shape as
+  it's tapped.
 - The guided tour's bubble goes beside its spot when there's room, else above
   or below it. In a browser, `web/storage.js` reports whether the screen is a
   touch screen (`matchMedia('(pointer: coarse)')`), so the tour says "tap"

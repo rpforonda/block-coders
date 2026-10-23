@@ -574,6 +574,13 @@ impl Play {
         }
     }
 
+    /// A program is going: running, paused in STEP mode, or just won (the win
+    /// popup is on its way). Upright phones hide the blocks only then, so the
+    /// moment a program stops they're back to fix it with.
+    fn going(&self) -> bool {
+        self.state == RunState::Running || self.win_timer.is_some()
+    }
+
     fn press_run(&mut self, sfx: &Sounds) {
         sfx.play(Sfx::Click);
         match self.state {
@@ -612,7 +619,7 @@ impl Play {
     pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &mut Sounds, progress: &mut Progress, canvas: (f32, f32)) -> Nav {
         let dt = get_frame_time().min(0.1);
         self.update(dt, sfx, progress);
-        self.lay = Layout::new(canvas.0, canvas.1, self.state != RunState::Editing);
+        self.lay = Layout::new(canvas.0, canvas.1, self.going());
         // Remember the program as it was, so any change this frame can be undone.
         let before = self.program.clone();
         let mut nav = Nav::Stay;
@@ -1167,7 +1174,9 @@ impl Play {
             _ => "RUN >",
         };
         let run_color = if self.state == RunState::Running && !self.stepping { rgb8(200, 150, 30) } else { rgb8(60, 170, 60) };
-        if ui.button(self.lay.run, run_label, run_color, 26.0) {
+        // RUN AGAIN steps down a little on the narrowest phones.
+        let run_size = fit_size(run_label, self.lay.run.w - 12.0, 26.0, 20.0);
+        if ui.button(self.lay.run, run_label, run_color, run_size) {
             self.press_run(sfx);
         }
         if ui.button(self.lay.step, "STEP", rgb8(70, 130, 180), 20.0) {
@@ -1177,7 +1186,11 @@ impl Play {
             sfx.play(Sfx::Click);
             self.reset_run();
         }
-        let speed_label = format!("Speed: {}", SPEEDS[self.speed].0);
+        // Where a speed won't fit on one line (upright phones), it goes under
+        // "Speed:". Every speed gets the same shape, so the label doesn't jump
+        // between one line and two as it's tapped.
+        let one_line = SPEEDS.iter().all(|(name, _)| text_width(&format!("Speed: {name}"), 18.0) <= self.lay.speed.w - 12.0);
+        let speed_label = format!("Speed:{}{}", if one_line { " " } else { "\n" }, SPEEDS[self.speed].0);
         if ui.button(self.lay.speed, &speed_label, rgb8(90, 90, 110), 18.0) {
             sfx.play(Sfx::Click);
             self.speed = (self.speed + 1) % SPEEDS.len();

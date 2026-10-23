@@ -10,7 +10,8 @@
 //! - **Tall** (phones held upright): the world on top, then Bit, then blocks
 //!   and program side by side, with RUN / STEP / RESET along the bottom. While
 //!   a program runs, the blocks step aside and the program fills the width, so
-//!   the running block is big and right under the miner.
+//!   the running block is big and right under the miner. The moment it stops,
+//!   the blocks come back.
 //!
 //! TypeSafe weighed these against tabs and a blocks drawer for 8-12 year olds
 //! new to computers (see docs/DESIGN.md, "Small screens").
@@ -102,9 +103,8 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// The layout for a `w` x `h` canvas. `running`: a program is running
-    /// (or has just finished), which in the Tall layout gives the program the
-    /// blocks' space.
+    /// The layout for a `w` x `h` canvas. `running`: a program is running or
+    /// paused, which in the Tall layout gives the program the blocks' space.
     pub fn new(w: f32, h: f32, running: bool) -> Layout {
         if w >= h { Layout::wide(w, h) } else { Layout::tall(w, h, running) }
     }
