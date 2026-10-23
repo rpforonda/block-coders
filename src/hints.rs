@@ -8,7 +8,8 @@
 //!   leads the kid to it: first a nudge, then the block, then the exact change.
 //! - Otherwise Bit explains what went wrong, points at that block, and says
 //!   which way the goal is from where the miner stopped.
-//! - A program that already wins but is long gets help finding a pattern.
+//! - A program that already wins but is long gets help finding a pattern, or
+//!   a block that ends both parts of an IF / ELSE (it can go once, after it).
 
 use crate::levels::Level;
 use crate::program::{Cond, Kind, Node, Program, Step, Vm, contains, kinds_used, simulate};
@@ -705,6 +706,19 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
             ),
         ];
     }
+    let used = p.block_count();
+    let goal = format!(
+        "Your program works! For 3 stars, solve it with {} blocks or fewer - you're using {used}.",
+        level.par
+    );
+    // Before the REPEAT numbers: taking the doubled block out is what saves
+    // blocks, while ending right at the goal can cost one (a FORWARD after the
+    // REPEAT).
+    if used > level.par {
+        if let Some(n) = [&p.main, &p.func].into_iter().find_map(|l| doubled_end(l)) {
+            return doubled_end_hints(&goal, n);
+        }
+    }
     let solution = solution_shape(level, &worlds);
     if !wins_cleanly(&shape, &solution) {
         let mut used = Vec::new();
@@ -719,17 +733,12 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
             None,
         )];
     }
-    let used = p.block_count();
     if used <= level.par {
         return vec![Hint::new(
             "Your program already solves this level with the fewest blocks. Press RUN and watch it go!",
             None,
         )];
     }
-    let goal = format!(
-        "Your program works! For 3 stars, solve it with {} blocks or fewer - you're using {used}.",
-        level.par
-    );
     if level.palette.contains(&Kind::Repeat) {
         if let Some(r) = [&p.main, &p.func].into_iter().filter_map(|l| repeated_run(l)).max_by_key(|r| r.saves) {
             let (same, those) = if r.len == 1 {
@@ -792,6 +801,40 @@ fn repeats_steps(p: &Program) -> bool {
 /// A block (with everything inside it) as text, for comparing blocks.
 fn key(n: &Node) -> String {
     Program { main: vec![n.clone()], func: Vec::new() }.serialize()
+}
+
+/// The first IF / ELSE whose two parts end with the same block. That block
+/// runs either way, so it can go once, right after the IF / ELSE, and the
+/// program does exactly the same.
+fn doubled_end(list: &[Node]) -> Option<&Node> {
+    list.iter().find_map(|n| {
+        let doubled = n.kind == Kind::IfElse
+            && matches!((n.body.last(), n.els.last()), (Some(a), Some(b)) if key(a) == key(b));
+        if doubled { Some(n) } else { doubled_end(&n.body).or_else(|| doubled_end(&n.els)) }
+    })
+}
+
+/// Uses the TOP and BOTTOM parts the IF / ELSE intro teaches. Wording and
+/// placement picked with TypeSafe (see docs/DESIGN.md).
+fn doubled_end_hints(goal: &str, if_else: &Node) -> Vec<Hint> {
+    let last = if_else.body.last().expect("doubled_end found a block in both parts");
+    let what = last.label().to_uppercase();
+    let saves = Program { main: vec![last.clone()], func: Vec::new() }.block_count();
+    let blocks = if saves == 1 { "1 block".to_string() } else { format!("{saves} blocks") };
+    vec![
+        Hint::new(format!("{goal} Look inside your IF / ELSE blocks. Is the same block at the end of BOTH parts?"), None),
+        Hint::new(
+            format!("The TOP part and the BOTTOM part of the outlined IF / ELSE both end with {what}. So {what} happens either way!"),
+            Some(if_else.id),
+        ),
+        Hint::new(
+            format!(
+                "Take {what} out of both parts, and put it once right AFTER the outlined IF / ELSE - below it, not \
+                 inside it. That saves {blocks}!"
+            ),
+            Some(if_else.id),
+        ),
+    ]
 }
 
 struct RepeatedRun {

@@ -705,6 +705,7 @@ screenshots don't show real players' names.
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
+| Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |
 
 ## Limitations and future work
 
