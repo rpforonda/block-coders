@@ -2,7 +2,7 @@
 
 use crate::art::shade;
 use macroquad::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -34,8 +34,10 @@ thread_local! {
     /// far. It never forgets one, and all text goes through `text`,
     /// `text_width`, `code_text` and `code_width`.
     static CACHED: RefCell<HashSet<(Face, char, u16)>> = RefCell::new(HashSet::new());
-    /// The two fonts, once loaded (see `load_fonts`).
-    static FONTS: RefCell<Option<(Font, Font)>> = const { RefCell::new(None) };
+    /// The two fonts, once loaded (see `load_fonts`). They're leaked, never
+    /// dropped: dropping one at exit deletes its texture after the window and
+    /// its GL context are gone, which crashed the game every time it quit.
+    static FONTS: Cell<Option<&'static (Font, Font)>> = const { Cell::new(None) };
 }
 
 /// Loads the fonts: Atkinson Hyperlegible (Braille Institute), designed so
@@ -46,12 +48,12 @@ pub fn load_fonts() {
     let text = load_ttf_font_from_bytes(include_bytes!("../assets/fonts/AtkinsonHyperlegible-Regular.ttf"));
     let code = load_ttf_font_from_bytes(include_bytes!("../assets/fonts/AtkinsonHyperlegibleMono.ttf"));
     if let (Ok(t), Ok(c)) = (text, code) {
-        FONTS.set(Some((t, c)));
+        FONTS.set(Some(Box::leak(Box::new((t, c)))));
     }
 }
 
 fn with_font<R>(face: Face, f: impl FnOnce(Option<&Font>) -> R) -> R {
-    FONTS.with_borrow(|fonts| f(fonts.as_ref().map(|(t, c)| if face == Face::Code { c } else { t })))
+    f(FONTS.get().map(|(t, c)| if face == Face::Code { c } else { t }))
 }
 
 /// macroquad 0.4.16 keeps glyphs in one font atlas texture. When a new glyph
