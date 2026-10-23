@@ -1617,3 +1617,214 @@ mod contrast {
         }
     }
 }
+
+/// The title, players, level select, World Check and keyboard layouts.
+mod menu_layouts {
+    use crate::layout::{self, canvas, Answer, KeyCap, SAMPLE_SCREENS};
+    use crate::ui::{VH, VW};
+    use macroquad::math::Rect;
+
+    fn eq(a: Rect, b: (f32, f32, f32, f32)) {
+        assert_eq!((a.x, a.y, a.w, a.h), b);
+    }
+
+    fn inside(r: Rect, c: (f32, f32)) -> bool {
+        r.x >= -0.01 && r.y >= -0.01 && r.x + r.w <= c.0 + 0.01 && r.y + r.h <= c.1 + 0.01
+    }
+
+    fn no_overlaps(name: &str, what: &str, rects: &[Rect]) {
+        for (i, a) in rects.iter().enumerate() {
+            for b in &rects[i + 1..] {
+                assert!(!a.overlaps(b), "{name}: {what} overlap: {a:?} and {b:?}");
+            }
+        }
+    }
+
+    /// Every screen size the layouts are tested on, as canvases (and whether it's
+    /// narrower than today's phones, which are best effort).
+    fn canvases() -> Vec<(&'static str, (f32, f32), bool)> {
+        SAMPLE_SCREENS.iter().map(|&(n, sw, sh)| {
+            let (w, h, _) = canvas(sw, sh);
+            (n, (w, h), sw < 360.0)
+        }).collect()
+    }
+
+    #[test]
+    fn desktop_menus_are_unchanged() {
+        let c = (VW, VH);
+        let t = layout::title(c);
+        assert_eq!((t.title_y, t.title_size), (140.0, 120.0));
+        eq(t.subtitle, (0.0, 290.0, VW, 40.0));
+        eq(t.miner, (410.0, 360.0, 96.0, 128.0));
+        eq(t.bit, (780.0, 380.0, 96.0, 96.0));
+        eq(t.play, (520.0, 400.0, 240.0, 70.0));
+        assert_eq!(t.tagline.y, 540.0);
+
+        let u = layout::users(c, 5);
+        eq(u.back, (20.0, 18.0, 110.0, 40.0));
+        eq(u.cards[0], (70.0, 130.0, 360.0, 250.0));
+        eq(u.cards[4], (460.0, 410.0, 360.0, 250.0));
+        assert!(!u.compact);
+        eq(u.tip.unwrap(), (0.0, 742.0, VW, 30.0));
+
+        let s = layout::select_wide(c, 7, 15);
+        eq(s.worlds[0], (20.0, 80.0, 330.0, 92.0));
+        eq(s.worlds[6], (20.0, 686.0, 330.0, 92.0));
+        eq(s.panel, (380.0, 84.0, 880.0, 660.0));
+        eq(s.tile_rect(0), (410.0, 164.0, 148.0, 148.0));
+        eq(s.tile_rect(14), (1082.0, 524.0, 148.0, 148.0));
+        assert_eq!(s.player_x, 640.0);
+
+        let k = layout::check(c, Answer::Text, 3, true, true);
+        eq(k.back, (16.0, 12.0, 130.0, 40.0));
+        assert_eq!(k.pips, (980.0, 21.0, 22.0));
+        eq(k.program.unwrap(), (24.0, 148.0, 600.0, 360.0));
+        eq(k.map.unwrap(), (648.0, 148.0, 608.0, 360.0));
+        eq(k.choices[2], (190.0, 644.0, 900.0, 50.0));
+        eq(k.explain, (24.0, 712.0, 1232.0, 80.0));
+        eq(k.next, (1060.0, 728.0, 180.0, 48.0));
+        let k = layout::check(c, Answer::Spots, 3, false, true);
+        eq(k.map.unwrap(), (240.0, 148.0, 800.0, 360.0));
+        eq(k.choices[1], (540.0, 540.0, 200.0, 60.0));
+        let k = layout::check(c, Answer::Programs, 3, false, true);
+        eq(k.map.unwrap(), (240.0, 148.0, 800.0, 260.0));
+        eq(k.choices[2], (856.0, 424.0, 400.0, 276.0));
+        assert!(k.carousel.is_none());
+
+        let (area, keys) = layout::keyboard(c);
+        eq(area, (0.0, 486.0, VW, 314.0));
+        assert_eq!(keys.iter().find(|k| k.0 == KeyCap::Char('1')).unwrap().1.x, (VW - 12.6 * 78.0 - 11.6 * 8.0) / 2.0);
+        eq(keys.iter().find(|k| k.0 == KeyCap::Hide).unwrap().1, (816.0, 740.0, 164.0, 52.0));
+    }
+
+    #[test]
+    fn title_and_players_fit_every_screen() {
+        for (name, c, tiny) in canvases() {
+            let t = layout::title(c);
+            for r in [t.miner, t.bit, t.play, t.subtitle, t.tagline] {
+                assert!(inside(r, c), "{name}: title item off screen {r:?}");
+            }
+            no_overlaps(name, "title items", &[t.miner, t.bit, t.play]);
+            // Up to 6 cards: six players, or fewer plus "New player".
+            for n in 1..=crate::save::MAX_USERS {
+                let u = layout::users(c, n);
+                assert_eq!(u.cards.len(), n);
+                let mut all = u.cards.clone();
+                all.push(u.back);
+                if let Some(tip) = u.tip {
+                    all.push(tip);
+                }
+                for r in all.iter().chain([&u.title]) {
+                    assert!(inside(*r, c), "{name}: {n} players: off screen {r:?}");
+                }
+                no_overlaps(name, "player cards", &all);
+                // The title is a full-width band (its text is centred), so only the cards must clear it.
+                assert!(u.cards.iter().all(|r| !r.overlaps(&u.title)), "{name}: cards under the title");
+                if !tiny {
+                    assert!(u.cards.iter().all(|r| r.h >= 96.0 && r.w >= 300.0), "{name}: {n} players: cards too small");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn level_select_fits_every_screen() {
+        for (name, c, tiny) in canvases() {
+            for tiles in [7, 9, 13, 15] {
+                if layout::is_tall(c) {
+                    let s = layout::select_tall(c, 7, tiles);
+                    let mut all: Vec<Rect> = (0..tiles).map(|n| s.tile_rect(n)).collect();
+                    all.push(s.back);
+                    all.push(s.info);
+                    for r in all.iter().chain(&s.worlds) {
+                        assert!(inside(*r, c), "{name}: off screen {r:?}");
+                    }
+                    no_overlaps(name, "level tiles", &all);
+                    let mut worlds = s.worlds.clone();
+                    worlds.push(s.back);
+                    no_overlaps(name, "worlds", &worlds);
+                    if !tiny {
+                        assert!(s.tile >= 100.0, "{name}: {tiles} tiles are {}px", s.tile);
+                        assert!(s.worlds.iter().all(|r| r.h >= 80.0), "{name}: worlds too short");
+                    }
+                } else {
+                    let s = layout::select_wide(c, 7, tiles);
+                    let tiles_r: Vec<Rect> = (0..tiles).map(|n| s.tile_rect(n)).collect();
+                    for r in &tiles_r {
+                        assert!(s.panel.contains(r.point()) && s.panel.contains(r.point() + r.size()), "{name}: tile outside the panel {r:?}");
+                    }
+                    no_overlaps(name, "level tiles", &tiles_r);
+                    let mut side = s.worlds.clone();
+                    side.push(s.panel);
+                    side.push(s.back);
+                    for r in &side {
+                        assert!(inside(*r, c), "{name}: off screen {r:?}");
+                    }
+                    no_overlaps(name, "worlds and panel", &side);
+                    assert!(s.tile >= 80.0, "{name}: {tiles} tiles are {}px", s.tile);
+                    assert!(s.worlds.iter().all(|r| r.h >= 44.0), "{name}: worlds too short to tap");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn world_checks_fit_every_screen() {
+        for (name, c, tiny) in canvases() {
+            for answer in [Answer::Text, Answer::Spots, Answer::Programs] {
+                for (prog, map) in [(true, false), (false, true), (true, true)] {
+                    let l = layout::check(c, answer, 3, prog, map);
+                    let mut all = l.choices.clone();
+                    all.extend(l.program);
+                    all.extend(l.map);
+                    if let Some(car) = l.carousel {
+                        all.extend([car.prev, car.label, car.next, car.pick]);
+                    }
+                    let what = format!("{name} {answer:?} program={prog} map={map}");
+                    for r in all.iter().chain([&l.back, &l.explain, &l.next, &l.prompt]) {
+                        assert!(inside(*r, c), "{what}: off screen {r:?}");
+                    }
+                    // The explanation shares no space with the answers or panels.
+                    let mut with_explain = all.clone();
+                    with_explain.push(l.explain);
+                    no_overlaps(&what, "check items", &with_explain);
+                    assert!(l.next.y >= l.explain.y && l.next.y + l.next.h <= l.explain.y + l.explain.h + 0.01, "{what}: Next outside the explanation");
+                    if !tiny {
+                        for r in l.program.iter().chain(l.map.iter()) {
+                            assert!(r.h >= 120.0 && r.w >= 200.0, "{what}: panel too small {r:?}");
+                        }
+                        assert!(l.choices.iter().all(|r| r.h >= 50.0), "{what}: answers too small to tap");
+                        if answer == Answer::Programs {
+                            assert!(l.choices.iter().all(|r| r.h >= 130.0), "{what}: programs too small to read");
+                        }
+                    }
+                    // Phones held upright show programs one at a time.
+                    assert_eq!(l.carousel.is_some(), answer == Answer::Programs && (layout::is_tall(c) || c.1 < 640.0), "{what}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn keyboards_fit_and_keys_are_tappable() {
+        for (name, c, tiny) in canvases() {
+            let (area, keys) = layout::keyboard(c);
+            assert!(inside(area, c), "{name}: keyboard off screen");
+            let rects: Vec<Rect> = keys.iter().map(|k| k.1).collect();
+            for r in &rects {
+                assert!(area.contains(r.point()) && area.contains(r.point() + r.size()), "{name}: key outside the keyboard {r:?}");
+            }
+            no_overlaps(name, "keys", &rects);
+            if !tiny {
+                assert!(rects.iter().all(|r| r.w >= 40.0 && r.h >= 44.0), "{name}: keys too small to tap");
+            }
+            // Every letter, digit, '-' and '_' can be typed, plus space and erase.
+            for ch in "abcdefghijklmnopqrstuvwxyz0123456789-_".chars() {
+                assert!(keys.iter().any(|k| k.0 == KeyCap::Char(ch)), "{name}: no '{ch}' key");
+            }
+            for cap in [KeyCap::Space, KeyCap::Erase, KeyCap::Shift, KeyCap::Hide] {
+                assert!(keys.iter().any(|k| k.0 == cap), "{name}: no {cap:?} key");
+            }
+        }
+    }
+}

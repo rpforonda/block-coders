@@ -4,6 +4,7 @@
 
 use crate::art::{draw_tex, shade, Art};
 use crate::editor::kind_color;
+use crate::layout::{self, Answer, Canvas, CheckLayout};
 use crate::levels::{Level, BASE, CHAPTERS, LEVELS};
 use crate::program::{Kind, Node, Program};
 #[cfg(test)]
@@ -170,6 +171,8 @@ pub struct CheckScreen {
     shirt: usize,
     passed_before: bool,
     rng: Rng,
+    /// On phones, which program (by its place in the shown order) is on screen.
+    shown: usize,
 }
 
 fn fresh_seed() -> u64 {
@@ -203,10 +206,21 @@ impl CheckScreen {
             shirt,
             passed_before: progress.checks[chapter],
             rng: Rng::new(fresh_seed()),
+            shown: 0,
         };
         s.start_attempt(progress);
         s.phase = Phase::Intro;
         s
+    }
+
+    /// Screenshot autopilot (debug builds): puts question `id` first, its
+    /// right answer shown second so the picker has to move to it.
+    pub fn debug_question(&mut self, id: &str) {
+        if let Some(q) = BANKS[self.chapter].iter().find(|q| q.id == id) {
+            self.questions[0] = q;
+            let n = choice_count(q);
+            self.orders[0] = (0..n).map(|i| (i + n - 1) % n).collect();
+        }
     }
 
     /// Draws a new set of questions. They count as seen straight away, so
@@ -226,6 +240,7 @@ impl CheckScreen {
             .collect();
         self.results.clear();
         self.picked = None;
+        self.shown = 0;
         self.phase = Phase::Ask;
         progress.check_last[self.chapter] = self.questions.iter().map(|q| q.id.to_string()).collect();
         progress.save();
@@ -235,24 +250,28 @@ impl CheckScreen {
         self.results.iter().filter(|&&r| r).count() as u32
     }
 
-    pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress) -> CheckOut {
+    pub fn frame(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress, c: Canvas) -> CheckOut {
         let ch = &CHAPTERS[self.chapter];
         let color = rgb8(ch.color.0, ch.color.1, ch.color.2);
-        draw_rectangle(0.0, 0.0, VW, VH, rgb8(28, 28, 34));
-        draw_rectangle(0.0, 0.0, VW, 64.0, shade(color, 0.55));
+        // The header is the same for every kind of question.
+        let head = layout::check(c, Answer::Text, 3, false, false);
+        draw_rectangle(0.0, 0.0, c.0, c.1, rgb8(28, 28, 34));
+        draw_rectangle(0.0, 0.0, c.0, head.header_h, shade(color, 0.55));
         let mut out = CheckOut::Stay;
-        if ui.button(Rect::new(16.0, 12.0, 130.0, 40.0), "< Levels", rgb8(110, 110, 120), 20.0) {
+        if ui.button(head.back, "< Levels", rgb8(110, 110, 120), 20.0) {
             sfx.play(Sfx::Click);
             out = CheckOut::Back;
         }
-        shadow_text(&format!("World {} Check: {}", self.chapter + 1, ch.concept), 168.0, 14.0, 32.0, WHITE);
-        self.draw_pips();
+        let title = format!("World {} Check: {}", self.chapter + 1, ch.concept);
+        let room = if layout::is_tall(c) { c.0 - head.title.x - 12.0 } else { head.pips.0 - head.title.x - 16.0 };
+        shadow_text(&title, head.title.x, head.title.y, fit_size(&title, room, head.title.size, 18.0), WHITE);
+        self.draw_pips(&head);
 
         match self.phase {
-            Phase::Intro => self.intro(ui, art, sfx),
-            Phase::Ask => self.ask(ui, art, sfx, progress),
+            Phase::Intro => self.intro(ui, art, sfx, c),
+            Phase::Ask => self.ask(ui, art, sfx, progress, c),
             Phase::Done => {
-                if let Some(o) = self.done(ui, art, sfx, progress) {
+                if let Some(o) = self.done(ui, art, sfx, progress, c) {
                     out = o;
                 }
             }
@@ -261,11 +280,10 @@ impl CheckScreen {
     }
 
     /// One square per question: green right, red wrong, outlined = current.
-    fn draw_pips(&self) {
-        let s = 22.0;
-        let x0 = VW - 20.0 - ASKED as f32 * (s + 6.0);
+    fn draw_pips(&self, l: &CheckLayout) {
+        let (x0, y, s) = l.pips;
         for i in 0..ASKED {
-            let r = Rect::new(x0 + i as f32 * (s + 6.0), 21.0, s, s);
+            let r = Rect::new(x0 + i as f32 * (s + 6.0), y, s, s);
             let fill = match self.results.get(i) {
                 Some(true) => rgb8(70, 190, 80),
                 Some(false) => rgb8(200, 60, 50),
@@ -277,11 +295,13 @@ impl CheckScreen {
         }
     }
 
-    fn intro(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds) {
-        let r = Rect::new(VW / 2.0 - 380.0, 150.0, 760.0, 470.0);
+    fn intro(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, c: Canvas) {
+        let narrow = c.0 - 24.0 < 700.0;
+        let r = layout::popup(c, 760.0, if narrow { 560.0 } else { 470.0 }, 150.0);
         panel(r);
         draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 80.0, 80.0, WHITE);
-        text(&format!("World {} Check", self.chapter + 1), r.x + 124.0, r.y + 44.0, 34.0, TITLE_ON_LIGHT);
+        let heading = format!("World {} Check", self.chapter + 1);
+        text(&heading, r.x + 124.0, r.y + 44.0, fit_size(&heading, r.w - 144.0, 34.0, 22.0), TITLE_ON_LIGHT);
         let concept = CHAPTERS[self.chapter].concept.to_lowercase();
         let unlock = if self.chapter + 1 == CHAPTERS.len() - 1 {
             format!(
@@ -298,8 +318,14 @@ impl CheckScreen {
         if self.passed_before {
             body = format!("You've already passed this check, so this is just for practice.\n\n{body}");
         }
-        draw_rectangle(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0, rgb8(60, 60, 72));
-        paragraph(&body, r.x + 36.0, r.y + 134.0, r.w - 72.0, 21.0, WHITE);
+        let box_r = Rect::new(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0);
+        draw_rectangle(box_r.x, box_r.y, box_r.w, box_r.h, rgb8(60, 60, 72));
+        // Long text in a small box steps down a little, never below 16px.
+        let size = [21.0, 19.0, 17.5, 16.0]
+            .into_iter()
+            .find(|&s| wrap(&body, box_r.w - 32.0, s).len() as f32 * s * 1.3 <= box_r.h - 20.0)
+            .unwrap_or(16.0);
+        paragraph(&body, box_r.x + 16.0, box_r.y + 16.0, box_r.w - 32.0, size, WHITE);
         if ui.button(Rect::new(r.x + r.w / 2.0 - 110.0, r.y + r.h - 66.0, 220.0, 48.0), "Start!", rgb8(60, 170, 60), 26.0)
             || is_key_pressed(KeyCode::Enter)
         {
@@ -308,20 +334,30 @@ impl CheckScreen {
         }
     }
 
-    fn ask(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress) {
+    fn ask(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress, c: Canvas) {
         let n = self.results.len();
         let q = self.questions[n];
         let order = self.orders[n].clone();
         let answered = self.picked.is_some();
         let floor = floor_of(self.chapter);
-
-        // The question.
-        draw_tex(&art.bit, 20.0, 76.0, 56.0, 56.0, WHITE);
-        text(&format!("Question {} of {ASKED}", n + 1), 92.0, 76.0, 18.0, rgb8(170, 170, 185));
-        paragraph(q.prompt, 92.0, 98.0, VW - 120.0, 24.0, WHITE);
-
         let program = (!q.program.is_empty()).then(|| Program::deserialize(q.program)).flatten();
         let has_map = !q.map.is_empty();
+        let answer = match q.choices {
+            Choices::Text(_) => Answer::Text,
+            Choices::Spots(_) => Answer::Spots,
+            Choices::Programs(_) => Answer::Programs,
+        };
+        let l = layout::check(c, answer, order.len(), program.is_some(), has_map);
+
+        // The question.
+        draw_tex(&art.bit, l.bit.x, l.bit.y, l.bit.w, l.bit.h, WHITE);
+        text(&format!("Question {} of {ASKED}", n + 1), l.counter.x, l.counter.y, l.counter.size, rgb8(170, 170, 185));
+        let size = [l.prompt_size, l.prompt_size - 3.0]
+            .into_iter()
+            .find(|&s| wrap(q.prompt, l.prompt.w, s).len() as f32 * s * 1.3 <= l.prompt.h + 4.0)
+            .unwrap_or(l.prompt_size - 3.0);
+        paragraph(q.prompt, l.prompt.x, l.prompt.y, l.prompt.w, size, WHITE);
+
         let spots = match q.choices {
             Choices::Spots(s) => Some(s),
             _ => None,
@@ -340,16 +376,11 @@ impl CheckScreen {
             .unwrap_or_default();
 
         // The program and map to read.
-        let program_choices = matches!(q.choices, Choices::Programs(_));
-        let top = 148.0;
-        let h = if program_choices { 260.0 } else { 360.0 };
-        let both = program.is_some() && has_map;
-        if let Some(p) = &program {
-            let r = if both { Rect::new(24.0, top, 600.0, h) } else { Rect::new(VW / 2.0 - 400.0, top, 800.0, h) };
+        let program_choices = answer == Answer::Programs;
+        if let (Some(p), Some(r)) = (&program, l.program) {
             draw_program_panel(p, r, art, if program_choices { "This program:" } else { "" });
         }
-        if has_map {
-            let r = if both { Rect::new(648.0, top, 608.0, h) } else { Rect::new(VW / 2.0 - 400.0, top, 800.0, h) };
+        if let Some(r) = l.map {
             draw_map(q, r, art, floor, self.shirt, &spot_marks);
         }
 
@@ -366,12 +397,13 @@ impl CheckScreen {
         match q.choices {
             Choices::Text(texts) => {
                 for (shown, &c) in order.iter().enumerate() {
-                    let r = Rect::new(VW / 2.0 - 450.0, 524.0 + shown as f32 * 60.0, 900.0, 50.0);
+                    let r = l.choices[shown];
                     let label = format!("{}   {}", LETTERS[shown], texts[c]);
+                    let size = fit_size(&label, r.w - 20.0, 22.0, 16.0);
                     if answered {
                         bevel(r, rgb8(80, 80, 95));
-                        text_centered(&label, r, 22.0, WHITE, true);
-                    } else if ui.button(r, &label, rgb8(70, 110, 170), 22.0) {
+                        text_centered(&label, r, size, WHITE, true);
+                    } else if ui.button(r, &label, rgb8(70, 110, 170), size) {
                         chosen = Some(c);
                     }
                     mark(r, c, self.picked);
@@ -379,33 +411,73 @@ impl CheckScreen {
             }
             Choices::Spots(_) => {
                 for (shown, &c) in order.iter().enumerate() {
-                    let r = Rect::new(VW / 2.0 - 330.0 + shown as f32 * 230.0, 540.0, 200.0, 60.0);
+                    let r = l.choices[shown];
                     let label = format!("Square {}", LETTERS[shown]);
+                    let size = fit_size(&label, r.w - 16.0, 26.0, 18.0);
                     if answered {
                         bevel(r, rgb8(80, 80, 95));
-                        text_centered(&label, r, 26.0, WHITE, true);
-                    } else if ui.button(r, &label, rgb8(70, 110, 170), 26.0) {
+                        text_centered(&label, r, size, WHITE, true);
+                    } else if ui.button(r, &label, rgb8(70, 110, 170), size) {
                         chosen = Some(c);
                     }
                     mark(r, c, self.picked);
                 }
             }
-            Choices::Programs(progs) => {
-                let w = 400.0;
-                for (shown, &c) in order.iter().enumerate() {
-                    let r = Rect::new(24.0 + shown as f32 * (w + 16.0), 424.0, w, 276.0);
-                    let hover = !answered && ui.hover(r);
-                    bevel(r, if hover { rgb8(85, 105, 150) } else { rgb8(60, 70, 95) });
+            Choices::Programs(progs) => match l.carousel {
+                // Phones: one program at a time, with arrows and a button to pick it.
+                Some(car) => {
+                    let shown = self.shown.min(order.len() - 1);
+                    let c = order[shown];
+                    let r = l.choices[0];
+                    bevel(r, rgb8(60, 70, 95));
                     shadow_text(&format!("Program {}", LETTERS[shown]), r.x + 12.0, r.y + 8.0, 22.0, WHITE);
                     if let Some(p) = Program::deserialize(progs[c]) {
                         draw_program(&p, Rect::new(r.x + 8.0, r.y + 38.0, r.w - 16.0, r.h - 46.0), art);
                     }
-                    if !answered && ui.clicked(r) {
-                        chosen = Some(c);
-                    }
                     mark(r, c, self.picked);
+                    let count = order.len();
+                    if ui.button(car.prev, "<", rgb8(70, 110, 170), 28.0) {
+                        sfx.play(Sfx::Click);
+                        self.shown = (shown + count - 1) % count;
+                    }
+                    if ui.button(car.next, ">", rgb8(70, 110, 170), 28.0) {
+                        sfx.play(Sfx::Click);
+                        self.shown = (shown + 1) % count;
+                    }
+                    // Wording picked with TypeSafe for clarity and kindness (see docs/DESIGN.md).
+                    let counter = format!("{}  -  tap the arrows to see all {count}", LETTERS[shown]);
+                    text_centered(&counter, car.label, fit_size(&counter, car.label.w - 8.0, 20.0, 15.0), WHITE, true);
+                    if !answered {
+                        if ui.button(car.pick, &format!("This one! (Program {})", LETTERS[shown]), rgb8(60, 170, 60), 24.0) {
+                            chosen = Some(c);
+                        }
+                    } else {
+                        let (words, col) = if c == 0 {
+                            ("This one works!", ok)
+                        } else if self.picked == Some(c) {
+                            ("Your pick - nice try!", rgb8(255, 170, 150))
+                        } else {
+                            ("Not this one. Use the arrows to compare.", rgb8(170, 170, 185))
+                        };
+                        text_centered(words, car.pick, fit_size(words, car.pick.w - 16.0, 22.0, 16.0), col, true);
+                    }
                 }
-            }
+                None => {
+                    for (shown, &c) in order.iter().enumerate() {
+                        let r = l.choices[shown];
+                        let hover = !answered && ui.hover(r);
+                        bevel(r, if hover { rgb8(85, 105, 150) } else { rgb8(60, 70, 95) });
+                        shadow_text(&format!("Program {}", LETTERS[shown]), r.x + 12.0, r.y + 8.0, 22.0, WHITE);
+                        if let Some(p) = Program::deserialize(progs[c]) {
+                            draw_program(&p, Rect::new(r.x + 8.0, r.y + 38.0, r.w - 16.0, r.h - 46.0), art);
+                        }
+                        if !answered && ui.clicked(r) {
+                            chosen = Some(c);
+                        }
+                        mark(r, c, self.picked);
+                    }
+                }
+            },
         }
         // Keys 1-4 (or A-D) pick an answer too.
         if !answered {
@@ -421,22 +493,32 @@ impl CheckScreen {
         if let Some(c) = chosen {
             self.picked = Some(c);
             sfx.play(if c == 0 { Sfx::Collect } else { Sfx::Bonk });
+            // On phones, show the right program once answered.
+            self.shown = order.iter().position(|&o| o == 0).unwrap_or(0);
         }
 
         // Bit explains, then on to the next question.
         if let Some(p) = self.picked {
             let right = p == 0;
-            let r = Rect::new(24.0, 712.0, VW - 48.0, 80.0);
+            let r = l.explain;
             draw_rectangle(r.x, r.y, r.w, r.h, if right { rgb8(35, 80, 45) } else { rgb8(95, 40, 40) });
             draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, if right { ok } else { bad });
             let head = if right { "Right! " } else { "Not quite. " };
-            paragraph(&format!("{head}{}", q.explain), r.x + 14.0, r.y + 8.0, r.w - 230.0, 18.0, WHITE);
+            let words = format!("{head}{}", q.explain);
+            // The words go beside the Next button, or above it when it sits along the bottom.
+            let beside = l.next.y < r.y + 30.0;
+            let area = if beside { Rect::new(r.x + 14.0, r.y + 8.0, r.w - 230.0, r.h - 12.0) } else { Rect::new(r.x + 14.0, r.y + 8.0, r.w - 28.0, l.next.y - r.y - 12.0) };
+            let size = [18.0, 16.5, 15.0]
+                .into_iter()
+                .find(|&s| wrap(&words, area.w, s).len() as f32 * s * 1.3 <= area.h + 2.0)
+                .unwrap_or(15.0);
+            paragraph(&words, area.x, area.y, area.w, size, WHITE);
             let last = n + 1 == ASKED;
-            let b = Rect::new(r.x + r.w - 196.0, r.y + 16.0, 180.0, 48.0);
-            if ui.button(b, if last { "Finish" } else { "Next >" }, rgb8(60, 170, 60), 24.0) || is_key_pressed(KeyCode::Enter) {
+            if ui.button(l.next, if last { "Finish" } else { "Next >" }, rgb8(60, 170, 60), 24.0) || is_key_pressed(KeyCode::Enter) {
                 sfx.play(Sfx::Click);
                 self.results.push(right);
                 self.picked = None;
+                self.shown = 0;
                 if last {
                     self.phase = Phase::Done;
                     if self.score() >= PASS {
@@ -449,17 +531,20 @@ impl CheckScreen {
                 }
             }
         } else {
-            text_centered("Pick an answer!", Rect::new(0.0, 724.0, VW, 30.0), 20.0, rgb8(170, 170, 185), false);
+            let tip = if crate::keyboard::is_touch() { "Tap an answer!" } else { "Pick an answer!" };
+            text_centered(tip, Rect::new(l.explain.x, l.explain.y + 12.0, l.explain.w, 30.0), 20.0, rgb8(170, 170, 185), false);
         }
     }
 
-    fn done(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress) -> Option<CheckOut> {
+    fn done(&mut self, ui: &mut Ui, art: &Art, sfx: &Sounds, progress: &mut Progress, c: Canvas) -> Option<CheckOut> {
         let score = self.score();
         let passed = score >= PASS;
-        let r = Rect::new(VW / 2.0 - 360.0, 130.0, 720.0, 520.0);
+        // Narrow popups stack their buttons, so they're taller.
+        let narrow = c.0 - 24.0 < 620.0;
+        let r = layout::popup(c, 720.0, if narrow { 600.0 } else { 520.0 }, 130.0);
         panel(r);
         let title = if passed { "You passed!" } else { "Almost there!" };
-        text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 48.0), 44.0, if passed { TITLE_ON_LIGHT } else { WARN_ON_LIGHT }, false);
+        text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 48.0), fit_size(title, r.w - 40.0, 44.0, 28.0), if passed { TITLE_ON_LIGHT } else { WARN_ON_LIGHT }, false);
         text_centered(&format!("{score} / {ASKED}"), Rect::new(r.x, r.y + 80.0, r.w, 70.0), 64.0, DARK_TEXT, false);
         let next = self.chapter + 1;
         let next_open = progress.world_open(next);
@@ -487,17 +572,23 @@ impl CheckScreen {
         draw_tex(&art.bit, r.x + 30.0, r.y + 180.0, 72.0, 72.0, WHITE);
         paragraph(&body, r.x + 120.0, r.y + 186.0, r.w - 150.0, 22.0, rgb8(30, 30, 30));
         let by = r.y + r.h - 70.0;
+        let full = |y: f32| Rect::new(r.x + 30.0, y, r.w - 60.0, 50.0);
         let mut out = None;
         if passed && next_open {
-            if ui.button(Rect::new(r.x + r.w - 300.0, by, 270.0, 50.0), &format!("Go to World {} >", next + 1), rgb8(60, 170, 60), 24.0) {
+            let b = if narrow { full(by - 62.0) } else { Rect::new(r.x + r.w - 300.0, by, 270.0, 50.0) };
+            if ui.button(b, &format!("Go to World {} >", next + 1), rgb8(60, 170, 60), 24.0) {
                 sfx.play(Sfx::Click);
                 out = Some(CheckOut::World(next));
             }
-        } else if !passed && ui.button(Rect::new(r.x + r.w - 250.0, by, 220.0, 50.0), "Try again", rgb8(70, 130, 180), 24.0) {
-            sfx.play(Sfx::Click);
-            self.start_attempt(progress);
+        } else if !passed {
+            let b = if narrow { full(by - 62.0) } else { Rect::new(r.x + r.w - 250.0, by, 220.0, 50.0) };
+            if ui.button(b, "Try again", rgb8(70, 130, 180), 24.0) {
+                sfx.play(Sfx::Click);
+                self.start_attempt(progress);
+            }
         }
-        if ui.button(Rect::new(r.x + 30.0, by, 180.0, 50.0), "Levels", rgb8(110, 110, 120), 22.0) {
+        let levels = if narrow { full(by) } else { Rect::new(r.x + 30.0, by, 180.0, 50.0) };
+        if ui.button(levels, "Levels", rgb8(110, 110, 120), 22.0) {
             sfx.play(Sfx::Click);
             out = Some(CheckOut::Back);
         }
