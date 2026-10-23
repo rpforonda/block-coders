@@ -1,6 +1,7 @@
 //! An on-screen keyboard for typing names on touch screens.
 
 use crate::sound::{Sfx, Sounds};
+use crate::layout::{self, Canvas, KeyCap};
 use crate::ui::*;
 use macroquad::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,14 +64,6 @@ fn has_touch_screen() -> bool {
     false
 }
 
-const ROWS: [&str; 4] = ["1234567890-", "qwertyuiop_", "asdfghjkl", "zxcvbnm"];
-const KEY: f32 = 78.0;
-const GAP: f32 = 8.0;
-const KEY_H: f32 = 52.0;
-
-/// The space the keyboard takes up at the bottom of the screen.
-pub const AREA: Rect = Rect { x: 0.0, y: VH - 5.0 * (KEY_H + GAP) - 14.0, w: VW, h: 5.0 * (KEY_H + GAP) + 14.0 };
-
 pub enum Key {
     Char(char),
     Backspace,
@@ -92,75 +85,57 @@ impl Keyboard {
 
     /// Draws the keyboard and returns the key tapped this frame, if any.
     /// `empty` turns on capitals for the first letter, like a phone does.
-    pub fn frame(&mut self, ui: &mut Ui, sfx: &Sounds, empty: bool) -> Option<Key> {
-        let a = AREA;
-        dark_panel(a);
+    pub fn frame(&mut self, ui: &mut Ui, sfx: &Sounds, empty: bool, c: Canvas) -> Option<Key> {
+        let (area, keys) = layout::keyboard(c);
+        dark_panel(area);
         let upper = self.shift || empty;
         let mut out = None;
-        let row_y = |r: usize| a.y + 14.0 + r as f32 * (KEY_H + GAP);
-        let row_x = |n: f32| (VW - n * KEY - (n - 1.0) * GAP) / 2.0;
-
-        // Letter rows. Row 0 gets the erase key on the end, row 3 has shift at both ends.
-        for (r, keys) in ROWS.iter().enumerate() {
-            let extra = match r {
-                0 => 1.6,
-                3 => 2.0 * 1.5,
-                _ => 0.0,
-            };
-            let n = keys.len() as f32;
-            let mut x = row_x(n + extra) + if r == 3 { 1.5 * KEY + GAP } else { 0.0 };
-            if r == 2 {
-                x += KEY * 0.3;
-            }
-            for c in keys.chars() {
-                let shown = if upper { c.to_ascii_uppercase() } else { c };
-                let b = Rect::new(x, row_y(r), KEY, KEY_H);
-                if ui.button(b, &shown.to_string(), rgb8(225, 225, 232), 30.0) {
-                    out = Some(Key::Char(shown));
-                }
-                x += KEY + GAP;
-            }
-            if r == 0 {
-                let b = Rect::new(x, row_y(0), KEY * 1.6, KEY_H);
-                let hit = ui.button(b, "", rgb8(150, 80, 70), 20.0);
-                erase_icon(b);
-                if hit {
-                    out = Some(Key::Backspace);
-                    self.held_since = Some(get_time());
-                    self.last_repeat = get_time();
-                } else if let Some(t) = self.held_since {
-                    // Holding erase keeps erasing.
-                    let now = get_time();
-                    if !(ui.down && ui.hover(b)) {
-                        self.held_since = None;
-                    } else if now - t > 0.45 && now - self.last_repeat > 0.07 {
-                        self.last_repeat = now;
-                        out = Some(Key::Backspace);
+        for (cap, b) in keys {
+            match cap {
+                KeyCap::Char(ch) => {
+                    let shown = if upper { ch.to_ascii_uppercase() } else { ch };
+                    if ui.button(b, &shown.to_string(), rgb8(225, 225, 232), (b.h * 0.58).min(30.0)) {
+                        out = Some(Key::Char(shown));
                     }
                 }
-            }
-            if r == 3 {
-                for sx in [row_x(n + extra), x] {
-                    let b = Rect::new(sx, row_y(3), KEY * 1.5, KEY_H);
+                KeyCap::Erase => {
+                    let hit = ui.button(b, "", rgb8(150, 80, 70), 20.0);
+                    erase_icon(b);
+                    if hit {
+                        out = Some(Key::Backspace);
+                        self.held_since = Some(get_time());
+                        self.last_repeat = get_time();
+                    } else if let Some(t) = self.held_since {
+                        // Holding erase keeps erasing.
+                        let now = get_time();
+                        if !(ui.down && ui.hover(b)) {
+                            self.held_since = None;
+                        } else if now - t > 0.45 && now - self.last_repeat > 0.07 {
+                            self.last_repeat = now;
+                            out = Some(Key::Backspace);
+                        }
+                    }
+                }
+                KeyCap::Shift => {
                     let fill = if self.shift { rgb8(255, 215, 40) } else { rgb8(120, 120, 135) };
                     if ui.button(b, "", fill, 20.0) {
                         sfx.play(Sfx::Click);
                         self.shift = !self.shift;
                     }
-                    shift_icon(b, if self.shift { rgb8(40, 30, 0) } else { WHITE });
+                    let bg = readable_bg(fill);
+                    shift_icon(b, text_on(bg));
+                }
+                KeyCap::Space => {
+                    if ui.button(b, "space", rgb8(225, 225, 232), 22.0) {
+                        out = Some(Key::Char(' '));
+                    }
+                }
+                KeyCap::Hide => {
+                    if ui.button(b, "Hide", rgb8(90, 90, 110), 22.0) {
+                        out = Some(Key::Hide);
+                    }
                 }
             }
-        }
-
-        // Bottom row: space bar and hide.
-        let y = row_y(4);
-        let space = Rect::new(row_x(8.0), y, 6.0 * KEY + 5.0 * GAP, KEY_H);
-        if ui.button(space, "space", rgb8(225, 225, 232), 22.0) {
-            out = Some(Key::Char(' '));
-        }
-        let hide = Rect::new(space.x + space.w + GAP, y, 2.0 * KEY + GAP, KEY_H);
-        if ui.button(hide, "Hide", rgb8(90, 90, 110), 22.0) {
-            out = Some(Key::Hide);
         }
 
         match out {

@@ -378,10 +378,40 @@ drag blocks inside the program to reorder them).
 
 The game draws on a virtual canvas. On a screen where the desktop's 1280x800
 fits at 80% or more, nothing changes: it's scaled to fit as before. Below that,
-shrinking it would make text 6-9pt on a phone, so the **play screen** gets a
-canvas the shape of the screen at 80% instead (`layout::canvas`), and
-`layout::Layout` places everything for it. The other screens (title, players,
-level select, World Check) are still 1280x800 and scaled: they're next.
+shrinking it would make text 6-9pt on a phone, so every screen gets a canvas
+the shape of the screen at 80% instead (`layout::canvas`), and `layout.rs`
+places everything for it: `Layout` for the play screen, and `title`, `users`,
+`select_wide` / `select_tall`, `check` and `keyboard` for the rest. They're
+pure functions of the canvas size, so tests check them on 12 screen sizes
+without drawing anything. At 1280x800 each one returns the desktop's own
+rectangles (a test checks them).
+
+**The menus and World Check on phones.**
+
+- **Title:** the same layout, squeezed on short screens; on the narrowest,
+  the miner and Bit shrink and sit at the edges.
+- **Players:** the fewest columns where every card fits *without scrolling*
+  (one column upright, two or three sideways). Cards shrink, never below
+  96px, and small cards switch to a one-row design: picture, name and stars,
+  then "Start over" and "Delete" stacked on the right. The tip at the bottom
+  goes first when space runs out.
+- **Level select, upright:** two pages. A list of the 7 worlds, and one
+  world's levels in a 3-column grid; the screen opens on the current world's
+  levels, with "< Worlds" to switch. Sideways keeps the desktop's two columns,
+  with a slimmer worlds column under 1100 wide, one-line world buttons when
+  they're short, and as many level columns (3-8) as give the biggest tiles.
+- **World Check, upright:** everything stacked, with Bit's explanation in its
+  own space at the bottom. "Which program…?" questions show **one program at
+  a time**: "<" and ">" to compare, then "This one! (Program A)". After
+  answering, it flips to the right program ("This one works!"). Sideways puts
+  the program and map on the left with Bit's explanation under them, and the
+  answers (the program picker too) on the right.
+- **Keyboard:** upright phones get phone-style rows ten keys wide (keys 43px,
+  52px tall); wider screens keep the desktop rows, narrower or shorter if
+  needed. The New player popup sits above it, and on short screens leaves out
+  picking a miner until the keyboard is hidden.
+- `BC_QUESTION=w6-09` (debug builds, with `BC_CHECK`) opens a World Check on
+  that question, so the screenshot autopilot can show any kind of question.
 
 - **Wide** (anything wider than tall: desktops, tablets, phones held
   sideways): the desktop's three columns, resized. Under 1100 wide the blocks
@@ -408,7 +438,21 @@ level select, World Check) are still 1280x800 and scaled: they're next.
 - `BC_WINDOW=390x844` (debug builds) opens a phone-sized window, for the
   screenshot autopilot and for trying layouts on the desktop.
 
-**How the layout was chosen.** TypeSafe compared arrangements for each screen
+**How the menu layouts were chosen.** For upright phones, TypeSafe compared
+options with real sizes (`target/pedagogy-eval/menus/`, not committed). The
+two-page level select won (0.70; understanding 1.42/2, against 1.12 for world
+buttons above the grid and 0.24 for one long scrolling list). One program at a
+time won for program questions (0.82; readable 0.85, against 0.38 for all three
+stacked and 0.08 side by side). For players, one column won the vote, but
+two columns scored better on understanding (1.30 against 1.04, because one
+column had to scroll on short phones); a third option, one column whose cards
+shrink so nothing scrolls, won both (0.55; understanding 1.38). As built, the
+three score 1.38, 1.35 and 1.31 for understanding. TypeSafe also chose the
+program picker's words, for clarity and kindness to a child who got it wrong:
+"This one! (Program A)", "A - tap the arrows to see all 3", "This one works!"
+and "Your pick - nice try!" (instead of "You picked this one.").
+
+**How the play screen layout was chosen.** TypeSafe compared arrangements for each screen
 shape: stacked, tabs, world-and-program with a blocks drawer, and two hybrids.
 It judged them for an 8-12 year old new to computers, given real sizes at a
 readable scale (`target/pedagogy-eval/mobile/`, not committed). Tabs won its
@@ -659,10 +703,10 @@ screenshots don't show real players' names.
   exist yet. A GitHub Actions matrix could build them.
 - **Web version.** Planned; see [WEB.md](WEB.md). The main change is moving
   saves to browser storage.
-- **Touch screens.** Taps work as clicks, and the play screen reshapes for
-  phones (see [Small screens](#small-screens)). The title, players, level
-  select and World Check screens are still 1280×800 scaled down, so they're
-  small on phones.
+- **Touch screens.** Taps work as clicks, and every screen reshapes for
+  phones (see [Small screens](#small-screens)). There's no drag-to-scroll:
+  the layouts avoid scrolling where they can, and long lists (the blocks, a
+  long program, the Rust code) have scrollbars.
 - **Accessibility.** No screen reader support. Colors are bold and paired with
   icons and text labels, but they haven't been checked for color blindness.
 - **One function, no parameters, one variable.** Possible next concepts:

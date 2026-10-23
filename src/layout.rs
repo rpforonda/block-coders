@@ -219,8 +219,7 @@ impl Layout {
     /// A centred popup of up to `w` x `h`, at most `y` from the top (the
     /// desktop's position), shrunk to fit small canvases.
     pub fn popup(&self, w: f32, h: f32, y: f32) -> Rect {
-        let (w, h) = (w.min(self.w - 24.0), h.min(self.h - 24.0));
-        Rect::new((self.w - w) / 2.0, y.min((self.h - h) / 2.0), w, h)
+        popup((self.w, self.h), w, h, y)
     }
 }
 
@@ -232,4 +231,498 @@ fn column_controls(c: Rect) -> (Rect, Rect, Rect, Rect) {
     let reset = Rect::new(c.x + 20.0 + half, run.y + 60.0, half, 36.0);
     let speed = Rect::new(c.x + 10.0, run.y + 106.0, c.w - 20.0, 32.0);
     (run, step, reset, speed)
+}
+
+// ------------------------------------------------------------------ menus
+//
+// The title, players, level select and World Check screens, laid out the
+// same way: at 1280x800 every rectangle is the desktop's own, and smaller
+// canvases reshape. The phone designs were weighed with TypeSafe (see
+// docs/DESIGN.md, "Small screens").
+
+/// A canvas: (width, height).
+pub type Canvas = (f32, f32);
+
+/// Phones held upright get the stacked screens.
+pub fn is_tall(c: Canvas) -> bool {
+    c.0 < c.1
+}
+
+/// A popup of up to `w` x `h`, centred on the canvas, at most `y` from the top
+/// (the desktop's position), shrunk to fit.
+pub fn popup(c: Canvas, w: f32, h: f32, y: f32) -> Rect {
+    let (w, h) = (w.min(c.0 - 24.0), h.min(c.1 - 24.0));
+    Rect::new((c.0 - w) / 2.0, y.min((c.1 - h) / 2.0), w, h)
+}
+
+/// The title screen.
+pub struct TitleLayout {
+    pub title_y: f32,
+    pub title_size: f32,
+    pub subtitle: Rect,
+    pub miner: Rect,
+    pub bit: Rect,
+    pub play: Rect,
+    /// The one-line description, wrapped to this width.
+    pub tagline: Rect,
+}
+
+pub fn title(c: Canvas) -> TitleLayout {
+    let (w, h) = c;
+    // Desktop offsets from the centre, squeezed on short screens.
+    let k = (h / VH).clamp(0.6, 1.0);
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    // On the narrowest screens the miner and Bit get smaller and sit at the edges.
+    let (mw, bw) = if cx - 230.0 < 12.0 { (72.0, 72.0) } else { (96.0, 96.0) };
+    TitleLayout {
+        title_y: cy - 260.0 * k,
+        title_size: 120.0 * k.max(0.7),
+        subtitle: Rect::new(0.0, cy - 110.0 * k, w, 40.0),
+        miner: Rect::new((cx - 230.0).max(12.0), cy - 40.0 * k, mw, mw * 4.0 / 3.0),
+        bit: Rect::new((cx + 140.0).min(w - 12.0 - bw), cy - 20.0 * k, bw, bw),
+        play: Rect::new(cx - 120.0, cy, 240.0, 70.0),
+        tagline: Rect::new(20.0, cy + 140.0 * k, w - 40.0, 60.0),
+    }
+}
+
+/// The "Who's playing?" screen.
+pub struct UsersLayout {
+    pub back: Rect,
+    /// "Who's playing?", centred in this.
+    pub title: Rect,
+    pub title_size: f32,
+    pub cards: Vec<Rect>,
+    /// Cards too small for the desktop design get the one-row design.
+    pub compact: bool,
+    /// The tip at the bottom, if there's room.
+    pub tip: Option<Rect>,
+}
+
+/// Cards for `n` players (plus the "New player" card, counted in `n`).
+pub fn users(c: Canvas, n: usize) -> UsersLayout {
+    let (w, h) = c;
+    if w >= 1150.0 && h >= 760.0 {
+        // The desktop: three columns of big cards.
+        let left = (w - 3.0 * 360.0 - 2.0 * 30.0) / 2.0;
+        let cards = (0..n).map(|i| Rect::new(left + (i % 3) as f32 * 390.0, 130.0 + (i / 3) as f32 * 280.0, 360.0, 250.0)).collect();
+        return UsersLayout {
+            back: Rect::new(20.0, 18.0, 110.0, 40.0),
+            title: Rect::new(0.0, 40.0, w, 60.0),
+            title_size: 52.0,
+            cards,
+            compact: false,
+            tip: Some(Rect::new(0.0, h - 58.0, w, 30.0)),
+        };
+    }
+    // Everything else: the fewest columns where every card fits without
+    // scrolling. Cards shrink (never below 96px) rather than scroll.
+    let (m, gap, top) = (12.0, 10.0, 110.0);
+    let n = n.max(1);
+    let fit = |tip: f32| {
+        (1..=3).find_map(|cols| {
+            let card_w = ((w - 2.0 * m - (cols - 1) as f32 * gap) / cols as f32).min(380.0);
+            let rows = n.div_ceil(cols);
+            let card_h = ((h - top - m - tip - (rows - 1) as f32 * gap) / rows as f32).min(250.0);
+            (card_w >= 300.0 && card_h >= 96.0).then_some((cols, card_w, card_h))
+        })
+    };
+    let (tip, (cols, card_w, card_h)) = match fit(48.0) {
+        Some(f) => (true, f),
+        // No room for the tip: drop it before shrinking cards further.
+        None => (false, fit(0.0).unwrap_or((1, (w - 2.0 * m).min(380.0), 96.0))),
+    };
+    let left = (w - cols as f32 * card_w - (cols - 1) as f32 * gap) / 2.0;
+    let cards = (0..n)
+        .map(|i| Rect::new(left + (i % cols) as f32 * (card_w + gap), top + (i / cols) as f32 * (card_h + gap), card_w, card_h))
+        .collect();
+    UsersLayout {
+        back: Rect::new(m, 10.0, 110.0, 40.0),
+        title: Rect::new(0.0, 56.0, w, 44.0),
+        title_size: 40.0,
+        cards,
+        compact: card_h < 200.0 || card_w < 340.0,
+        tip: tip.then(|| Rect::new(m, h - m - 44.0, w - 2.0 * m, 44.0)),
+    }
+}
+
+/// The level select screen, for wide canvases: worlds down the left, the
+/// chosen world's levels in a grid on the right.
+pub struct SelectWide {
+    pub back: Rect,
+    pub player_x: f32,
+    pub worlds: Vec<Rect>,
+    pub panel: Rect,
+    /// Space for the world's name above the grid.
+    pub header_h: f32,
+    pub tile: f32,
+    pub cols: usize,
+    pub gap_x: f32,
+    pub gap_y: f32,
+    pub info: Rect,
+}
+
+impl SelectWide {
+    pub fn tile_rect(&self, n: usize) -> Rect {
+        Rect::new(
+            self.panel.x + 30.0 + (n % self.cols) as f32 * (self.tile + self.gap_x),
+            self.panel.y + self.header_h + (n / self.cols) as f32 * (self.tile + self.gap_y),
+            self.tile,
+            self.tile,
+        )
+    }
+}
+
+/// `tiles`: how many tiles the chosen world has (levels plus its World Check).
+pub fn select_wide(c: Canvas, worlds: usize, tiles: usize) -> SelectWide {
+    let (w, h) = c;
+    let step = (h - 93.0) / worlds as f32;
+    // Narrower screens get a slimmer column of worlds, so the levels have room.
+    let col = if w >= SLIM_W { 330.0 } else { 240.0 };
+    let world_rects = (0..worlds).map(|i| Rect::new(20.0, 80.0 + i as f32 * step, col, step - 9.0)).collect();
+    let panel = Rect::new(col + 50.0, 84.0, w - col - 70.0, h - 140.0);
+    let short = panel.h < 500.0;
+    let (header_h, gap_x, gap_y) = if short { (56.0, 20.0, 16.0) } else { (80.0, 20.0, 32.0) };
+    // The columns that give the biggest tiles (148 at most); on a tie, more
+    // columns (so the desktop keeps its 5).
+    let size = |cols: usize| {
+        let rows = tiles.max(1).div_ceil(cols);
+        let by_w = (panel.w - 60.0 - (cols - 1) as f32 * gap_x) / cols as f32;
+        let by_h = (panel.h - header_h - 10.0 - (rows - 1) as f32 * gap_y) / rows as f32;
+        by_w.min(by_h).min(148.0)
+    };
+    let cols = (3..=8).max_by(|&a, &b| size(a).total_cmp(&size(b)).then(a.cmp(&b))).unwrap_or(5);
+    SelectWide {
+        back: Rect::new(20.0, 18.0, 170.0, 40.0),
+        player_x: (w - 640.0).max(500.0),
+        worlds: world_rects,
+        panel,
+        header_h,
+        tile: size(cols),
+        cols,
+        gap_x,
+        gap_y,
+        info: Rect::new(0.0, h - 40.0, w, 28.0),
+    }
+}
+
+/// The level select screen on a phone held upright: two pages, a list of
+/// worlds and then one world's levels.
+pub struct SelectTall {
+    pub back: Rect,
+    pub worlds: Vec<Rect>,
+    pub tile: f32,
+    pub grid_x: f32,
+    pub grid_y: f32,
+    pub gap: f32,
+    pub info: Rect,
+}
+
+impl SelectTall {
+    pub fn tile_rect(&self, n: usize) -> Rect {
+        Rect::new(self.grid_x + (n % 3) as f32 * (self.tile + self.gap), self.grid_y + (n / 3) as f32 * (self.tile + self.gap), self.tile, self.tile)
+    }
+}
+
+pub fn select_tall(c: Canvas, worlds: usize, tiles: usize) -> SelectTall {
+    let (w, h) = c;
+    let (m, gap) = (12.0, 12.0);
+    let top = 120.0;
+    let step = (h - top - m) / worlds as f32;
+    let world_rects = (0..worlds).map(|i| Rect::new(m, top + i as f32 * step, w - 2.0 * m, step - 8.0)).collect();
+    let rows = tiles.max(1).div_ceil(3);
+    let info_h = 44.0;
+    let tile = ((w - 2.0 * m - 2.0 * gap) / 3.0).min((h - top - info_h - m - 8.0 - (rows - 1) as f32 * gap) / rows as f32).min(148.0);
+    SelectTall {
+        back: Rect::new(m, 10.0, 140.0, 44.0),
+        worlds: world_rects,
+        tile,
+        grid_x: (w - 3.0 * tile - 2.0 * gap) / 2.0,
+        grid_y: top,
+        gap,
+        info: Rect::new(m, h - m - info_h, w - 2.0 * m, info_h),
+    }
+}
+
+/// What kind of answer a World Check question takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Answer {
+    Text,
+    Spots,
+    Programs,
+}
+
+/// Picking one program at a time (phones): the shown program, arrows to the
+/// others, and a button to pick it.
+#[derive(Clone, Copy, Debug)]
+pub struct Carousel {
+    pub prev: Rect,
+    pub label: Rect,
+    pub next: Rect,
+    pub pick: Rect,
+}
+
+/// A World Check question screen.
+#[derive(Clone, Debug)]
+pub struct CheckLayout {
+    pub header_h: f32,
+    pub back: Rect,
+    pub title: Label,
+    /// The question pips: left edge, top, size; they step by size + 6.
+    pub pips: (f32, f32, f32),
+    pub bit: Rect,
+    pub counter: Label,
+    /// The question, wrapped to this width.
+    pub prompt: Rect,
+    pub prompt_size: f32,
+    pub program: Option<Rect>,
+    pub map: Option<Rect>,
+    /// One box per answer, or one box for the program being shown (`carousel`).
+    pub choices: Vec<Rect>,
+    pub carousel: Option<Carousel>,
+    /// Bit's explanation after answering, and the Next button inside it.
+    pub explain: Rect,
+    pub next: Rect,
+}
+
+pub fn check(c: Canvas, answer: Answer, n: usize, has_program: bool, has_map: bool) -> CheckLayout {
+    let (w, h) = c;
+    if is_tall(c) {
+        return check_tall(c, answer, n, has_program, has_map);
+    }
+    let short = h < 640.0;
+    let header_h = if short { 56.0 } else { 64.0 };
+    let pip = 22.0;
+    let head = |y: f32| (Rect::new(16.0, (header_h - 40.0) / 2.0, 130.0, 40.0), Label { x: 168.0, y, size: 32.0 });
+    let (back, title) = head((header_h - 36.0) / 2.0);
+    let pips = (w - 20.0 - 10.0 * (pip + 6.0), (header_h - pip) / 2.0, pip);
+    let explain = Rect::new(24.0, h - 88.0, w - 48.0, 80.0);
+    let next = Rect::new(explain.x + explain.w - 196.0, explain.y + 16.0, 180.0, 48.0);
+    if short {
+        // Phones held sideways: the program and map on the left, the answers on the right.
+        let top = header_h + 44.0;
+        let col_w = (w - 3.0 * 16.0) / 2.0;
+        // Bit's explanation goes under the program and map, so the answers
+        // (often a whole program to read) get all of the right-hand column.
+        let explain = Rect::new(16.0, h - 12.0 - 110.0, col_w, 110.0);
+        let next = Rect::new(explain.x + explain.w - 150.0, explain.y + explain.h - 56.0, 140.0, 48.0);
+        let left = Rect::new(16.0, top, col_w, explain.y - 10.0 - top);
+        let right = Rect::new(32.0 + col_w, top, col_w, h - top - 12.0);
+        let (program, map) = match (has_program, has_map) {
+            (true, true) => {
+                let half = (left.h - 10.0) / 2.0;
+                (Some(Rect::new(left.x, left.y, left.w, half)), Some(Rect::new(left.x, left.y + half + 10.0, left.w, half)))
+            }
+            (true, false) => (Some(left), None),
+            (false, true) => (None, Some(left)),
+            (false, false) => (None, None),
+        };
+        let (choices, carousel) = answers_in(right, answer, n);
+        return CheckLayout {
+            header_h,
+            back,
+            title,
+            pips,
+            bit: Rect::new(16.0, header_h + 4.0, 36.0, 36.0),
+            counter: Label { x: 60.0, y: header_h + 6.0, size: 16.0 },
+            prompt: Rect::new(60.0, header_h + 22.0, w - 80.0, 20.0),
+            prompt_size: 20.0,
+            program,
+            map,
+            choices,
+            carousel,
+            explain,
+            next,
+        };
+    }
+    // The desktop arrangement (any wide screen tall enough for it).
+    let top = 148.0;
+    let middle = explain.y - 12.0 - top;
+    let stretch = middle / 552.0;
+    let ph = if answer == Answer::Programs { 260.0 * stretch } else { middle - 16.0 - 170.0 - 6.0 };
+    let both = has_program && has_map;
+    let wide = |x: f32, pw: f32| Rect::new(x, top, pw, ph);
+    let centred = Rect::new(w / 2.0 - 400.0, top, 800.0, ph);
+    let program = has_program.then(|| if both { wide(24.0, 600.0 * w / VW) } else { centred });
+    let map = has_map.then(|| if both { Rect::new(48.0 + 600.0 * w / VW, top, w - 72.0 - 600.0 * w / VW, ph) } else { centred });
+    let below = top + ph + 16.0;
+    let choices = match answer {
+        Answer::Text => (0..n).map(|i| Rect::new(w / 2.0 - 450.0, below + i as f32 * 60.0, 900.0, 50.0)).collect(),
+        Answer::Spots => (0..n).map(|i| Rect::new(w / 2.0 - 330.0 + i as f32 * 230.0, below + 16.0, 200.0, 60.0)).collect(),
+        Answer::Programs => {
+            let bw = (w - 48.0 - (n - 1) as f32 * 16.0) / n as f32;
+            (0..n).map(|i| Rect::new(24.0 + i as f32 * (bw + 16.0), below, bw.min(400.0), explain.y - 12.0 - below)).collect()
+        }
+    };
+    CheckLayout {
+        header_h,
+        back,
+        title,
+        pips,
+        bit: Rect::new(20.0, 76.0, 56.0, 56.0),
+        counter: Label { x: 92.0, y: 76.0, size: 18.0 },
+        prompt: Rect::new(92.0, 98.0, w - 120.0, 48.0),
+        prompt_size: 24.0,
+        program,
+        map,
+        choices,
+        carousel: None,
+        explain,
+        next,
+    }
+}
+
+/// Phones held upright: everything stacked, and programs to pick from shown
+/// one at a time (TypeSafe's pick: readable 0.85 against 0.38 for stacking all three).
+fn check_tall(c: Canvas, answer: Answer, n: usize, has_program: bool, has_map: bool) -> CheckLayout {
+    let (w, h) = c;
+    let m = 12.0;
+    let inner = w - 2.0 * m;
+    let short = h < 900.0;
+    let header_h = if short { 92.0 } else { 100.0 };
+    let pip = 22.0;
+    let explain_h = if short { 104.0 } else { 140.0 };
+    let explain = Rect::new(m, h - m - explain_h, inner, explain_h);
+    let next = Rect::new(explain.x + explain.w - 150.0, explain.y + explain.h - 56.0, 140.0, 48.0);
+    let prompt_h = if short { 60.0 } else { 90.0 };
+    let top = header_h + prompt_h + 10.0;
+    let bottom = explain.y - 10.0;
+    // The answers first (they need a fixed size), then the program and map share what's left.
+    let answers_h = match answer {
+        Answer::Text => n as f32 * 58.0 - 8.0,
+        Answer::Spots => 56.0,
+        // With a program and a map to show too, the answers get half.
+        Answer::Programs => ((bottom - top) * if has_program && has_map { 0.5 } else { 0.6 }).max(240.0),
+    };
+    let room = Rect::new(m, bottom - answers_h, inner, answers_h);
+    let (choices, carousel) = answers_in(room, answer, n);
+    let panels = room.y - 10.0 - top;
+    let (program, map) = match (has_program, has_map) {
+        (true, true) => {
+            let half = (panels - 10.0) / 2.0;
+            (Some(Rect::new(m, top, inner, half)), Some(Rect::new(m, top + half + 10.0, inner, half)))
+        }
+        (true, false) => (Some(Rect::new(m, top, inner, panels)), None),
+        (false, true) => (None, Some(Rect::new(m, top, inner, panels))),
+        (false, false) => (None, None),
+    };
+    CheckLayout {
+        header_h,
+        back: Rect::new(m, 8.0, 110.0, 40.0),
+        title: Label { x: m + 122.0, y: 14.0, size: 26.0 },
+        pips: ((w - 10.0 * (pip + 6.0) + 6.0) / 2.0, header_h - 34.0, pip),
+        bit: Rect::new(m, header_h + 4.0, 44.0, 44.0),
+        counter: Label { x: m + 56.0, y: header_h + 4.0, size: 16.0 },
+        prompt: Rect::new(m + 56.0, header_h + 24.0, inner - 56.0, prompt_h - 24.0),
+        prompt_size: 21.0,
+        program,
+        map,
+        choices,
+        carousel,
+        explain,
+        next,
+    }
+}
+
+/// The answer boxes inside `room` for the compact layouts: text answers
+/// stacked, square buttons in a row, and programs one at a time.
+fn answers_in(room: Rect, answer: Answer, n: usize) -> (Vec<Rect>, Option<Carousel>) {
+    match answer {
+        Answer::Text => ((0..n).map(|i| Rect::new(room.x, room.y + i as f32 * 58.0, room.w, 50.0)).collect(), None),
+        Answer::Spots => {
+            let bw = (room.w - (n - 1) as f32 * 10.0) / n as f32;
+            ((0..n).map(|i| Rect::new(room.x + i as f32 * (bw + 10.0), room.y, bw, 56.0)).collect(), None)
+        }
+        Answer::Programs => {
+            let controls = 48.0;
+            let pick_h = 52.0;
+            let box_r = Rect::new(room.x, room.y, room.w, room.h - controls - pick_h - 16.0);
+            let y = box_r.y + box_r.h + 8.0;
+            let carousel = Carousel {
+                prev: Rect::new(room.x, y, 64.0, controls),
+                label: Rect::new(room.x + 72.0, y, room.w - 144.0, controls),
+                next: Rect::new(room.x + room.w - 64.0, y, 64.0, controls),
+                pick: Rect::new(room.x, y + controls + 8.0, room.w, pick_h),
+            };
+            (vec![box_r], Some(carousel))
+        }
+    }
+}
+
+/// One key of the on-screen keyboard.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum KeyCap {
+    Char(char),
+    Erase,
+    Shift,
+    Space,
+    Hide,
+}
+
+/// The on-screen keyboard: its area and every key. Phones held upright get
+/// phone-style rows ten keys wide; wider screens get the desktop rows,
+/// narrower or shorter if needed.
+pub fn keyboard(c: Canvas) -> (Rect, Vec<(KeyCap, Rect)>) {
+    let (w, h) = c;
+    let mut keys = Vec::new();
+    if w < 900.0 {
+        let (m, gap, key_h) = (6.0, 5.0, 52.0);
+        let unit = ((w - 2.0 * m - 9.0 * gap) / 10.0).min(78.0);
+        let area_h = 5.0 * (key_h + gap) + 12.0;
+        let area = Rect::new(0.0, h - area_h, w, area_h);
+        let row_y = |r: usize| area.y + 10.0 + r as f32 * (key_h + gap);
+        let mut row = |r: usize, caps: &[(KeyCap, f32)]| {
+            let total: f32 = caps.iter().map(|c| c.1).sum::<f32>() * unit + (caps.len() - 1) as f32 * gap;
+            let mut x = (w - total) / 2.0;
+            for &(cap, units) in caps {
+                keys.push((cap, Rect::new(x, row_y(r), units * unit + (units - 1.0).max(0.0) * gap, key_h)));
+                x += units * unit + (units - 1.0).max(0.0) * gap + gap;
+            }
+        };
+        let chars = |s: &str| s.chars().map(|c| (KeyCap::Char(c), 1.0)).collect::<Vec<_>>();
+        row(0, &chars("1234567890"));
+        row(1, &chars("qwertyuiop"));
+        row(2, &chars("asdfghjkl-"));
+        let mut r3 = vec![(KeyCap::Shift, 1.4)];
+        r3.extend(chars("zxcvbnm"));
+        r3.push((KeyCap::Erase, 1.4));
+        row(3, &r3);
+        row(4, &[(KeyCap::Char('_'), 1.0), (KeyCap::Space, 5.4), (KeyCap::Hide, 2.0)]);
+        return (area, keys);
+    }
+    // The desktop rows: at 1280x800 exactly the original keyboard.
+    let gap = 8.0;
+    let key = 78f32.min((w - 24.0 - 12.0 * gap) / 12.6);
+    let key_h = if h < 640.0 { 44.0 } else { 52.0 };
+    let area_h = 5.0 * (key_h + gap) + 14.0;
+    let area = Rect::new(0.0, h - area_h, w, area_h);
+    let row_y = |r: usize| area.y + 14.0 + r as f32 * (key_h + gap);
+    let row_x = |n: f32| (w - n * key - (n - 1.0) * gap) / 2.0;
+    let rows = ["1234567890-", "qwertyuiop_", "asdfghjkl", "zxcvbnm"];
+    for (r, letters) in rows.iter().enumerate() {
+        let extra = match r {
+            0 => 1.6,
+            3 => 3.0,
+            _ => 0.0,
+        };
+        let n = letters.len() as f32;
+        let mut x = row_x(n + extra) + if r == 3 { 1.5 * key + gap } else { 0.0 };
+        if r == 2 {
+            x += key * 0.3;
+        }
+        for ch in letters.chars() {
+            keys.push((KeyCap::Char(ch), Rect::new(x, row_y(r), key, key_h)));
+            x += key + gap;
+        }
+        if r == 0 {
+            keys.push((KeyCap::Erase, Rect::new(x, row_y(0), key * 1.6, key_h)));
+        }
+        if r == 3 {
+            keys.push((KeyCap::Shift, Rect::new(row_x(n + extra), row_y(3), key * 1.5, key_h)));
+            keys.push((KeyCap::Shift, Rect::new(x, row_y(3), key * 1.5, key_h)));
+        }
+    }
+    let space = Rect::new(row_x(8.0), row_y(4), 6.0 * key + 5.0 * gap, key_h);
+    keys.push((KeyCap::Space, space));
+    keys.push((KeyCap::Hide, Rect::new(space.x + space.w + gap, row_y(4), 2.0 * key + gap, key_h)));
+    (area, keys)
 }

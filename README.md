@@ -73,10 +73,12 @@ like real software.
 - **Up to 6 players.** Each player has their own name, a miner with their own
   shirt color, and their own saved progress. Any player can *start over* from
   level 1.
-- **Readable on phones.** On a small screen the play screen reshapes instead
-  of shrinking: stacked when a phone is upright (world, Bit, then blocks and
-  program side by side, with RUN along the bottom), and in columns when it's
-  sideways. The other screens are still being adapted.
+- **Readable on phones.** On a small screen every screen reshapes instead of
+  shrinking. Upright, the play screen stacks the world, Bit, then the blocks
+  and the program, with RUN along the bottom; the level select shows a list of
+  worlds and then a world's levels; World Check questions show one program at
+  a time; and the keyboard has phone-style rows. Sideways, screens keep their
+  desktop arrangement, resized.
 - **Works on touch screens.** On a computer with a touch screen, an on-screen
   keyboard pops up for typing player names. Anyone can open it with the
   keyboard button in the name box.
