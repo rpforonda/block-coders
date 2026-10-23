@@ -737,6 +737,7 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
             } else {
                 (format!("{} blocks happen", r.len), format!("those {} blocks", r.len))
             };
+            let saves = if r.saves == 1 { "1 block".to_string() } else { format!("{} blocks", r.saves) };
             return vec![
                 Hint::new(format!("{goal} Look for a pattern that happens again and again."), None),
                 Hint::new(
@@ -744,7 +745,7 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
                     Some(r.first),
                 ),
                 Hint::new(
-                    format!("Put {those} inside a REPEAT {} block. That saves {} blocks!", r.times, r.saves),
+                    format!("Put {those} inside a REPEAT {} block. That saves {saves}!", r.times),
                     Some(r.first),
                 ),
             ];
