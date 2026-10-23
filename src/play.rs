@@ -1239,7 +1239,7 @@ impl Play {
                 let widest = lines.iter().max_by_key(|l| l.len()).map_or("", |l| l.as_str());
                 // Long programs scroll, a line at a time, with the wheel or a scrollbar.
                 let fit = |room: f32| {
-                    let size = fit_size(widest, room, base, 11.0);
+                    let size = fit_code_size(widest, room, base, 11.0);
                     let lh = size * 1.25;
                     let shown = (((code.h - 20.0) / lh).floor() as usize).max(1);
                     (size, lh, shown, lines.len().saturating_sub(shown))
@@ -1387,9 +1387,9 @@ impl Play {
 
 /// Draws one line of Rust with simple syntax colours (the font is monospaced).
 fn draw_code_line(line: &str, x: f32, y: f32, size: f32) {
-    let cw = text_width("0000000000", size) / 10.0;
+    let cw = code_width("0000000000", size) / 10.0;
     if line.trim_start().starts_with("//") {
-        text(line, x, y, size, rgb8(120, 170, 120));
+        code_text(line, x, y, size, rgb8(120, 170, 120));
         return;
     }
     let chars: Vec<char> = line.chars().collect();
@@ -1417,7 +1417,7 @@ fn draw_code_line(line: &str, x: f32, y: f32, size: f32) {
         }
         let tok: String = chars[start..i].iter().collect();
         if !tok.trim().is_empty() {
-            text(&tok, x + start as f32 * cw, y, size, color);
+            code_text(&tok, x + start as f32 * cw, y, size, color);
         }
     }
 }

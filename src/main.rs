@@ -336,6 +336,7 @@ pub fn dev_env(name: &str) -> Option<String> {
 async fn run() {
     keyboard::detect_touch();
     let art = Art::new();
+    load_fonts();
     let mut sfx = Sounds::load().await;
     // Developer autopilot: BC_SHOT=<dir> saves screenshots of a level being solved.
     let shot_dir = dev_env("BC_SHOT").filter(|dir| {
