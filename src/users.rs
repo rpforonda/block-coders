@@ -1,6 +1,7 @@
 //! "Who's playing?" - pick, create, reset or delete a player.
 
 use crate::art::{draw_tex, Art, SHIRTS};
+use crate::items::Look;
 use crate::keyboard::{self, Key, Keyboard};
 use crate::layout::{self, Canvas};
 use crate::levels::LEVELS;
@@ -25,8 +26,9 @@ pub enum UsersOut {
 
 pub struct UsersScreen {
     pub mode: Mode,
-    /// (stars, levels done) for each player, in the same order as `Users::list`.
-    stats: Vec<(u32, usize)>,
+    /// (stars, levels done, how their miner looks) for each player, in the
+    /// same order as `Users::list`.
+    stats: Vec<(u32, usize, Look)>,
     /// The on-screen keyboard for typing a name (open by default on touch screens).
     kb: Keyboard,
 }
@@ -47,7 +49,7 @@ impl UsersScreen {
             .iter()
             .map(|u| {
                 let p = Progress::load(u.id);
-                (p.total_stars(), p.levels_done())
+                (p.total_stars(), p.levels_done(), p.look(u.shirt))
             })
             .collect();
     }
@@ -74,11 +76,11 @@ impl UsersScreen {
             let hover = ui.hover(r);
             bevel(r, if hover { rgb8(95, 95, 110) } else { rgb8(70, 70, 85) });
             let bob = if hover { (get_time() * 8.0).sin() as f32 * 3.0 } else { 0.0 };
-            let (stars, done) = self.stats.get(i).copied().unwrap_or((0, 0));
+            let (stars, done, look) = self.stats.get(i).copied().unwrap_or((0, 0, Look { shirt: u.shirt, ..Look::default() }));
             let (reset, delete) = if l.compact {
                 // One row: the miner, name and stats, then the two buttons stacked on the right.
                 let pic_h = (r.h - 20.0).min(100.0);
-                draw_tex(art.player(u.shirt, Dir::Down), r.x + 12.0, r.y + (r.h - pic_h) / 2.0 + bob, pic_h * 0.75, pic_h, WHITE);
+                art.miner(&look, Dir::Down, Rect::new(r.x + 12.0, r.y + (r.h - pic_h) / 2.0 + bob, pic_h * 0.75, pic_h), WHITE);
                 let bw = 124.0;
                 let bx = r.x + r.w - bw - 10.0;
                 let by = r.y + (r.h - 86.0) / 2.0;
@@ -90,7 +92,7 @@ impl UsersScreen {
                 text(&format!("{stars} / {}", LEVELS.len() * 3), tx + 24.0, r.y + r.h - 32.0, 18.0, rgb8(255, 215, 40));
                 (Rect::new(bx, by, bw, 40.0), Rect::new(bx, by + 46.0, bw, 40.0))
             } else {
-                draw_tex(art.player(u.shirt, Dir::Down), r.x + 22.0, r.y + 30.0 + bob, 84.0, 112.0, WHITE);
+                art.miner(&look, Dir::Down, Rect::new(r.x + 22.0, r.y + 30.0 + bob, 84.0, 112.0), WHITE);
                 shadow_text(&u.name, r.x + 126.0, r.y + 30.0, 34.0, WHITE);
                 text(&format!("Levels done: {done} / {}", LEVELS.len()), r.x + 128.0, r.y + 80.0, 20.0, rgb8(210, 210, 220));
                 star(r.x + 140.0, r.y + 122.0, 12.0, true);

@@ -1,7 +1,11 @@
 //! All the pixel art, generated in code (no image files needed).
 
+pub mod outfits;
+
+use crate::items::{Look, Slot, ITEMS};
 use crate::world::{Dir, Floor, Tile};
 use macroquad::prelude::*;
+use outfits::ItemArt;
 
 fn hash(x: i32, y: i32, s: u32) -> f32 {
     let mut h = (x as u32).wrapping_mul(374_761_393)
@@ -93,6 +97,44 @@ pub const SHIRTS: [(u8, u8, u8); 8] = [
     (240, 240, 240),
 ];
 
+/// The miner's pixel rows facing up, right and down (left is right, mirrored).
+const MINER_UP: [&str; 16] = [
+    "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..",
+    "..HHHHHHHH..", "..HHHHHHHH..", "..SHHHHHHS..", ".CCCCCCCCCC.", ".SCCCCCCCCS.",
+    ".SCCCCCCCCS.", ".ScccccccccS", "..PPPPPPPP..", "..PPP..PPP..", "..PPP..PPP..",
+    "..GGG..GGG..",
+];
+const MINER_RIGHT: [&str; 16] = [
+    "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHSSSS..", "..HHHSSSSS..", "..HHSSSSBS..",
+    "..HSSSSSSS..", "..SSSSSSSN..", "..SSSSSMMS..", "...CCCCCC...", "...CCCCCC...",
+    "...CSSCCC...", "...cSSccc...", "...PPPPPP...", "...PPPPPP...", "...PPPPPP...",
+    "...GGGGGG...",
+];
+const MINER_DOWN: [&str; 16] = [
+    "..HHHHHHHH..", "..HHHHHHHH..", "..HSSSSSSH..", "..SSSSSSSS..", "..SWBSSBWS..",
+    "..SSSSSSSS..", "..SSSNNSSS..", "..SSMMMMSS..", ".CCCCCCCCCC.", ".SCCCCCCCCS.",
+    ".SCCCCCCCCS.", ".ScccccccccS", "..PPPPPPPP..", "..PPP..PPP..", "..PPP..PPP..",
+    "..GGG..GGG..",
+];
+
+const PICKAXE: &[&str] = &[
+    "...CCCCC....", "..CccccCC...", ".......cCC..", "......W.cC..", ".....W...cC.",
+    "....W....cC.", "...W......C.", "..W.........", ".W..........", "W...........",
+];
+
+/// Facings in texture order (`Dir as usize`).
+const DIRS: [Dir; 4] = [Dir::Up, Dir::Right, Dir::Down, Dir::Left];
+
+/// The miner's pixel rows facing `d`.
+fn miner_rows(d: Dir) -> Vec<String> {
+    match d {
+        Dir::Up => MINER_UP.map(String::from).to_vec(),
+        Dir::Right => MINER_RIGHT.map(String::from).to_vec(),
+        Dir::Down => MINER_DOWN.map(String::from).to_vec(),
+        Dir::Left => MINER_RIGHT.iter().map(|r| r.chars().rev().collect()).collect(),
+    }
+}
+
 const BIT: &[&str] = &[
     ".....RR.....", ".....AA.....", "..GGGGGGGG..", ".GLLLLLLLLG.", ".GLEELLEELG.", ".GLEELLEELG.",
     ".GLLLLLLLLG.", ".GLMLLLLMLG.", ".GLLMMMMLLG.", ".GLLLLLLLLG.", "..GGGGGGGG..", "...gg..gg...",
@@ -159,6 +201,8 @@ pub struct Art {
     portal: Vec<Texture2D>,
     portal_off: Texture2D,
     player: Vec<[Texture2D; 4]>,
+    /// One per `items::ITEMS`.
+    items: Vec<ItemArt>,
     pub bit: Texture2D,
     pub pickaxe: Texture2D,
 }
@@ -231,33 +275,11 @@ impl Art {
             ('P', rgb(60, 60, 160)),
             ('G', rgb(85, 85, 85)),
         ];
-        let down = [
-            "..HHHHHHHH..", "..HHHHHHHH..", "..HSSSSSSH..", "..SSSSSSSS..", "..SWBSSBWS..",
-            "..SSSSSSSS..", "..SSSNNSSS..", "..SSMMMMSS..", ".CCCCCCCCCC.", ".SCCCCCCCCS.",
-            ".SCCCCCCCCS.", ".ScccccccccS", "..PPPPPPPP..", "..PPP..PPP..", "..PPP..PPP..",
-            "..GGG..GGG..",
-        ];
-        let up = [
-            "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHHHHH..",
-            "..HHHHHHHH..", "..HHHHHHHH..", "..SHHHHHHS..", ".CCCCCCCCCC.", ".SCCCCCCCCS.",
-            ".SCCCCCCCCS.", ".ScccccccccS", "..PPPPPPPP..", "..PPP..PPP..", "..PPP..PPP..",
-            "..GGG..GGG..",
-        ];
-        let right = [
-            "..HHHHHHHH..", "..HHHHHHHH..", "..HHHHSSSS..", "..HHHSSSSS..", "..HHSSSSBS..",
-            "..HSSSSSSS..", "..SSSSSSSN..", "..SSSSSMMS..", "...CCCCCC...", "...CCCCCC...",
-            "...CSSCCC...", "...cSSccc...", "...PPPPPP...", "...PPPPPP...", "...PPPPPP...",
-            "...GGGGGG...",
-        ];
-        let left: Vec<String> = right.iter().map(|r| r.chars().rev().collect()).collect();
-        let left: Vec<&str> = left.iter().map(|s| s.as_str()).collect();
+        let rows = DIRS.map(miner_rows);
 
         let bit = sprite(BIT, &bit_palette());
         let pickaxe = sprite(
-            &[
-                "...CCCCC....", "..CccccCC...", ".......cCC..", "......W.cC..", ".....W...cC.",
-                "....W....cC.", "...W......C.", "..W.........", ".W..........", "W...........",
-            ],
+            PICKAXE,
             &[('C', rgb(60, 220, 210)), ('c', rgb(30, 160, 160)), ('W', rgb(140, 100, 55))],
         );
 
@@ -353,9 +375,10 @@ impl Art {
                     let mut pal = pal;
                     pal[6].1 = shirt;
                     pal[7].1 = shade(shirt, 0.77);
-                    [sprite(&up, &pal), sprite(&right, &pal), sprite(&down, &pal), sprite(&left, &pal)]
+                    rows.each_ref().map(|r| sprite(&r.iter().map(String::as_str).collect::<Vec<_>>(), &pal))
                 })
                 .collect(),
+            items: ITEMS.iter().map(|it| outfits::item_art(it.key)).collect(),
             bit,
             pickaxe,
         }
@@ -393,6 +416,28 @@ impl Art {
     /// The miner sprite, wearing shirt colour number `shirt` (see `SHIRTS`).
     pub fn player(&self, shirt: usize, d: Dir) -> &Texture2D {
         &self.player[shirt % SHIRTS.len()][d as usize]
+    }
+
+    /// The miner in `look`, facing `d`, in `r` (12:16, like the sprite). Held
+    /// tools and glows may reach a little outside it.
+    pub fn miner(&self, look: &Look, d: Dir, r: Rect, tint: Color) {
+        let time = get_time();
+        let tool = look.outfit.get(Slot::Tool);
+        for i in look.extras() {
+            outfits::draw_behind(&self.items[i], r, tint, time);
+        }
+        // Facing away, the tool is behind the miner.
+        if let Some(t) = tool.filter(|_| d == Dir::Up) {
+            outfits::draw_held(&self.items[t], d, r, tint, time);
+        }
+        draw_tex(self.player(look.base_shirt(), d), r.x, r.y, r.w, r.h, tint);
+        // Shirt first, so armor goes over it.
+        for i in look.extras().filter(|&i| ITEMS[i].slot != Slot::Tool) {
+            outfits::draw_worn(&self.items[i], d, r, tint, time);
+        }
+        if let Some(t) = tool.filter(|_| d != Dir::Up) {
+            outfits::draw_held(&self.items[t], d, r, tint, time);
+        }
     }
 }
 

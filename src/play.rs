@@ -4,6 +4,7 @@ use crate::art::{draw_tex, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
 use crate::hints::{self, Hint};
+use crate::items::{self, Look, ITEMS};
 
 /// How many changes Undo can go back.
 const HISTORY: usize = 100;
@@ -125,7 +126,9 @@ pub struct Play {
     win_timer: Option<f32>,
     stars: u8,
     shake: f32,
-    shirt: usize,
+    look: Look,
+    /// Wardrobe items the last win unlocked.
+    news: Vec<usize>,
     /// Earlier and undone versions of the program, for Undo / Redo.
     undo_stack: Vec<Program>,
     redo_stack: Vec<Program>,
@@ -187,7 +190,7 @@ fn ease(t: f32) -> f32 {
 }
 
 impl Play {
-    pub fn new(idx: usize, saved: Option<Program>, speed: usize, shirt: usize) -> Play {
+    pub fn new(idx: usize, saved: Option<Program>, speed: usize, look: Look) -> Play {
         let level = &LEVELS[idx];
         let program = saved.unwrap_or_default();
         // A first visit to level 1 gets the guided tour instead of the intro.
@@ -217,7 +220,8 @@ impl Play {
             win_timer: None,
             stars: 0,
             shake: 0.0,
-            shirt,
+            look,
+            news: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             restoring: false,
@@ -461,7 +465,9 @@ impl Play {
         let used = self.program.block_count();
         let par = self.level.par;
         self.stars = if used <= par { 3 } else if used <= par + 3 { 2 } else { 1 };
+        let before = progress.wardrobe_stars();
         progress.stars[self.idx] = progress.stars[self.idx].max(self.stars);
+        self.news = items::newly_unlocked(before, progress.wardrobe_stars());
         progress.programs[self.idx] = Some(self.program.clone());
         if self.saved(progress) == Saved::StartedOverElsewhere {
             return;
@@ -924,7 +930,7 @@ impl Play {
         draw_ellipse(cx, cy + ts * 0.36, ts * 0.28 * scale, ts * 0.09 * scale, 0.0, Color::new(0.0, 0.0, 0.0, 0.3));
         let sh = ts * 0.88 * scale;
         let sw = sh * 12.0 / 16.0;
-        draw_tex(art.player(self.shirt, dir), cx - sw / 2.0, cy - sh / 2.0 - hop - ts * 0.04, sw, sh, tint);
+        art.miner(&self.look, dir, Rect::new(cx - sw / 2.0, cy - sh / 2.0 - hop - ts * 0.04, sw, sh), tint);
 
         // Direction arrow.
         let a = angle.to_radians();
@@ -1322,7 +1328,10 @@ impl Play {
                 let last = self.idx + 1 >= LEVELS.len();
                 // Narrow screens stack the buttons in two rows, so the popup is taller.
                 let narrow = self.lay.w < 700.0;
-                let r = self.lay.popup(680.0, if narrow { 600.0 } else { 520.0 }, 130.0);
+                let news_h = if self.news.is_empty() { 0.0 } else { 32.0 };
+                let r = self.lay.popup(680.0, if narrow { 600.0 } else { 520.0 } + news_h, 130.0);
+                let by = r.y + r.h - 68.0;
+                let buttons_top = if narrow { by - 60.0 } else { by };
                 panel(r);
                 let title = if last { "YOU BEAT THE GAME!" } else { "Level complete!" };
                 let size = fit_size(title, r.w - 40.0, 40.0, 26.0);
@@ -1341,7 +1350,17 @@ impl Play {
                     "Perfect! That's as short as it gets.".to_string()
                 };
                 y += centered_paragraph(&extra, r.x + 20.0, y, r.w - 40.0, 19.0, rgb8(60, 60, 60)) + 15.0;
-                draw_rectangle(r.x + 30.0, y, r.w - 60.0, 184.0, rgb8(40, 80, 50));
+                if let Some(&first) = self.news.first() {
+                    let news = match self.news.len() - 1 {
+                        0 => format!("New in your Wardrobe: {}!", ITEMS[first].name),
+                        more => format!("New in your Wardrobe: {} and {more} more!", ITEMS[first].name),
+                    };
+                    text_centered(&news, Rect::new(r.x, y - 4.0, r.w, 26.0), fit_size(&news, r.w - 40.0, 22.0, 15.0), TITLE_ON_LIGHT, false);
+                    y += news_h;
+                }
+                // Short screens squeeze the lesson box rather than run it under the buttons.
+                let box_h = (buttons_top - 12.0 - y).clamp(120.0, 184.0);
+                draw_rectangle(r.x + 30.0, y, r.w - 60.0, box_h, rgb8(40, 80, 50));
                 shadow_text("What you learned:", r.x + 46.0, y + 12.0, 20.0, rgb8(160, 255, 170));
                 let ch = self.level.chapter;
                 let world_end = !last && LEVELS[self.idx + 1].chapter != ch;
@@ -1355,7 +1374,6 @@ impl Play {
                     self.level.lesson.to_string()
                 };
                 paragraph(&lesson, r.x + 46.0, y + 42.0, r.w - 92.0, 19.0, WHITE);
-                let by = r.y + r.h - 68.0;
                 let mut out = None;
                 // At the end of a world, the World Check comes before the next level.
                 let ch = self.level.chapter;
