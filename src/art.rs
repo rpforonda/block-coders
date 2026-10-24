@@ -1,5 +1,6 @@
 //! All the pixel art, generated in code (no image files needed).
 
+use crate::levels::BossKind;
 use crate::world::{Dir, Floor, Tile};
 use macroquad::prelude::*;
 
@@ -81,6 +82,201 @@ fn gem(x: i32, y: i32, light: Color, mid: Color, dark: Color, outline: Color) ->
     }
 }
 
+/// A heart for the health meter in boss fights. Half hearts draw its left half.
+pub const HEART: [&str; 8] = [
+    ".kk...kk.",
+    "kRRk.kRRk",
+    "kRWRkRRRk",
+    "kRRRRRRRk",
+    ".kRRRRRk.",
+    "..kRRRk..",
+    "...kRk...",
+    "....k....",
+];
+
+/// Pixel art for a sprite, and the colour of each letter in it.
+pub type PixelArt = ([&'static str; 16], &'static [(char, (u8, u8, u8))]);
+
+/// The six bosses, in `BossKind` order.
+pub const BOSS_ART: [PixelArt; 6] = [
+    // Mossback: a huge mossy turtle.
+    (
+        [
+            "................",
+            "....oooooooo....",
+            "..oosmssmsmsoo..",
+            ".osmssmsssmssmo.",
+            ".ossmsssmssmsso.",
+            "osmssmssmsssmsso",
+            "oooooooooooooooo",
+            ".yyyyyyyyyyyyyy.",
+            "HH..HHHHHHHH..HH",
+            "HH.HwwHHHHwwH.HH",
+            "HH.HwkHHHHwkH.HH",
+            "...HHHHHHHHHH...",
+            "....HHrrrrHH....",
+            ".....HHHHHH.....",
+            "................",
+            "................",
+        ],
+        &[
+            ('o', (30, 70, 30)),
+            ('s', (60, 110, 45)),
+            ('m', (110, 170, 70)),
+            ('y', (200, 190, 120)),
+            ('H', (110, 130, 70)),
+            ('w', (255, 255, 255)),
+            ('k', (15, 15, 15)),
+            ('r', (150, 40, 40)),
+        ],
+    ),
+    // Echo Bat: wings spread, glowing eyes.
+    (
+        [
+            "................",
+            "...e........e...",
+            "...pe......ep...",
+            "...pppppppppp...",
+            "d..ppyyppyypp..d",
+            "dd.pppppppppp.dd",
+            "dddpppfkkfpppddd",
+            "dddddppppppddddd",
+            ".dddd.pppp.dddd.",
+            "..ddd..pp..ddd..",
+            "...d..p..p..d...",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+        ],
+        &[
+            ('p', (95, 55, 135)),
+            ('d', (55, 30, 85)),
+            ('e', (210, 130, 180)),
+            ('y', (255, 230, 90)),
+            ('k', (15, 10, 20)),
+            ('f', (245, 245, 245)),
+        ],
+    ),
+    // Thornroot: an angry old tree with thorns.
+    (
+        [
+            "....gggggggg....",
+            "..ggGggGgggGgg..",
+            ".gGgggGggGggggg.",
+            ".ggggggggggggGg.",
+            "..gggbbbbbbggg..",
+            "t...bBbbbbBb...t",
+            ".t..byybbyyb..t.",
+            "..tbbbbbbbbbbt..",
+            "...bbbkkkkbbb...",
+            "....bbbbbbbb....",
+            "....bBbbbbBb....",
+            "...bbb.bb.bbb...",
+            "..bb...bb...bb..",
+            ".bb....bb....bb.",
+            "................",
+            "................",
+        ],
+        &[
+            ('g', (60, 140, 50)),
+            ('G', (110, 190, 75)),
+            ('b', (115, 78, 42)),
+            ('B', (70, 45, 25)),
+            ('y', (240, 220, 90)),
+            ('k', (20, 12, 8)),
+            ('t', (215, 205, 160)),
+        ],
+    ),
+    // Dune Scorpion: claws out, stinger raised.
+    (
+        [
+            "......ttt.......",
+            "......sSs.......",
+            ".......s........",
+            "SS.....s......SS",
+            "sSs....s.....sSs",
+            ".sss..sss...sss.",
+            "...sssSSSSsss...",
+            "..ssSrsSSsrSss..",
+            ".s.sSSSSSSSSs.s.",
+            "s..ssSSSSSSss..s",
+            ".s..ssSSSSss..s.",
+            "s....ssssss....s",
+            ".......ss.......",
+            "................",
+            "................",
+            "................",
+        ],
+        &[
+            ('s', (215, 175, 95)),
+            ('S', (150, 110, 50)),
+            ('r', (230, 40, 40)),
+            ('t', (90, 55, 25)),
+        ],
+    ),
+    // The Gloom: a shadow with glowing eyes.
+    (
+        [
+            "................",
+            ".....dddddd.....",
+            "...dddddddddd...",
+            "..dddddddddddd..",
+            ".ddddeeddeedddd.",
+            ".ddddeEddEedddd.",
+            ".dddddddddddddd.",
+            "ddddddmmmmdddddd",
+            "dddddmDDDDmddddd",
+            "ddddddmmmmdddddd",
+            "dddddddddddddddd",
+            "dddDdddDddddDddd",
+            "dd.ddd.dd.ddd.dd",
+            "d..d...dd...d..d",
+            "................",
+            "................",
+        ],
+        &[
+            ('d', (40, 34, 62)),
+            ('D', (18, 16, 30)),
+            ('e', (80, 240, 220)),
+            ('E', (225, 255, 250)),
+            ('m', (100, 45, 130)),
+        ],
+    ),
+    // Abacus Golem: a stone golem with counting beads on its chest.
+    (
+        [
+            "....gggggggg....",
+            "....gyyggyyg....",
+            "....gggkkggg....",
+            "..GGGGGGGGGGGG..",
+            "ggGGGGGGGGGGGGgg",
+            "gggGrrwwwbbwGggg",
+            "gggGwooowrrwGggg",
+            "gggGbbwwwwooGggg",
+            "gggGGGGGGGGGGggg",
+            "..gggggggggggg..",
+            "..ggg......ggg..",
+            "..ggg......ggg..",
+            ".GGGG......GGGG.",
+            "................",
+            "................",
+            "................",
+        ],
+        &[
+            ('g', (135, 135, 140)),
+            ('G', (85, 85, 92)),
+            ('y', (255, 200, 60)),
+            ('k', (20, 20, 20)),
+            ('r', (220, 60, 60)),
+            ('b', (60, 120, 230)),
+            ('o', (240, 200, 50)),
+            ('w', (205, 205, 205)),
+        ],
+    ),
+];
+
 /// Shirt colours players can pick for their miner.
 pub const SHIRTS: [(u8, u8, u8); 8] = [
     (0, 168, 168),
@@ -156,6 +352,10 @@ pub struct Art {
     bridge: Texture2D,
     pub emerald: Texture2D,
     pub diamond: Texture2D,
+    pub crystal: Texture2D,
+    bosses: Vec<Texture2D>,
+    pub heart_full: Texture2D,
+    pub heart_empty: Texture2D,
     portal: Vec<Texture2D>,
     portal_off: Texture2D,
     player: Vec<[Texture2D; 4]>,
@@ -338,6 +538,20 @@ impl Art {
             diamond: tex(|x, y| {
                 gem(x, y, rgb(170, 250, 245), rgb(80, 220, 215), rgb(30, 150, 160), rgb(15, 80, 90))
             }),
+            crystal: tex(|x, y| {
+                // A power crystal on a dark rock base.
+                let c = gem(x, y, rgb(255, 200, 255), rgb(225, 110, 245), rgb(160, 50, 200), rgb(80, 20, 110));
+                if c == BLANK { shade(rgb(52, 36, 64), 0.85 + 0.3 * hash(x, y, 90)) } else { c }
+            }),
+            bosses: BOSS_ART
+                .iter()
+                .map(|(rows, pal)| {
+                    let pal: Vec<(char, Color)> = pal.iter().map(|&(c, (r, g, b))| (c, rgb(r, g, b))).collect();
+                    sprite(rows, &pal)
+                })
+                .collect(),
+            heart_full: sprite(&HEART, &[('k', rgb(40, 10, 10)), ('R', rgb(220, 30, 40)), ('W', WHITE)]),
+            heart_empty: sprite(&HEART, &[('k', rgb(40, 10, 10)), ('R', rgb(70, 60, 60)), ('W', rgb(100, 90, 90))]),
             portal,
             portal_off: tex(|x, y| {
                 if x < 2 || x > 13 || y < 2 || y > 13 {
@@ -387,7 +601,15 @@ impl Art {
             Tile::Bridge => &self.bridge,
             Tile::Portal if portal_on => &self.portal[frame],
             Tile::Portal => &self.portal_off,
+            Tile::Crystal => &self.crystal,
+            // The boss is drawn once over all its squares (see `boss`).
+            Tile::Boss => return None,
         })
+    }
+
+    /// A boss creature, drawn once over all of its squares.
+    pub fn boss(&self, kind: BossKind) -> &Texture2D {
+        &self.bosses[kind as usize]
     }
 
     /// The miner sprite, wearing shirt colour number `shirt` (see `SHIRTS`).

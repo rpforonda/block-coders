@@ -3,6 +3,7 @@
 mod art;
 mod check;
 mod editor;
+mod fight;
 mod hints;
 mod keyboard;
 mod layout;
@@ -205,6 +206,7 @@ fn level_tile(ui: &mut Ui, progress: &Progress, i: usize, b: Rect) -> bool {
     let l = &LEVELS[i];
     let ch = &CHAPTERS[l.chapter];
     let t = b.w / 148.0;
+    let boss = l.boss.is_some();
     // A boss level's red BOSS banner across the top (on locked tiles too, so
     // kids can see it coming). Its number and die move down out of the way.
     let banner = Rect::new(b.x + 6.0 * t, b.y + 6.0 * t, b.w - 12.0 * t, (30.0 * t).max(22.0));
@@ -218,17 +220,17 @@ fn level_tile(ui: &mut Ui, progress: &Progress, i: usize, b: Rect) -> bool {
         let c = readable_bg(rgb8(ch.color.0, ch.color.1, ch.color.2));
         let clicked = ui.button(b, "", c, 20.0);
         let ink = text_on(c);
-        let number_y = if l.boss { below_banner - 2.0 } else { 14.0 * t };
+        let number_y = if boss { below_banner - 2.0 } else { 14.0 * t };
         text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + number_y, b.w, 60.0 * t), 56.0 * t, ink, ink == WHITE);
         for s in 0..3 {
             star(b.x + (40.0 + s as f32 * 34.0) * t, b.y + 108.0 * t, 14.0 * t, s < progress.stars[i] as usize);
         }
-        if l.boss {
+        if boss {
             draw_banner();
         }
         if l.is_random() {
             // A little die marks levels that change every run.
-            let die_y = if l.boss { below_banner + 4.0 } else { 8.0 * t };
+            let die_y = if boss { below_banner + 4.0 } else { 8.0 * t };
             let d = Rect::new(b.x + b.w - 30.0 * t, b.y + die_y, 22.0 * t, 22.0 * t);
             draw_rectangle(d.x, d.y, d.w, d.h, WHITE);
             draw_rectangle_lines(d.x, d.y, d.w, d.h, 2.0, BLACK);
@@ -242,7 +244,7 @@ fn level_tile(ui: &mut Ui, progress: &Progress, i: usize, b: Rect) -> bool {
         draw_rectangle_lines(b.x + 56.0 * t, b.y + 30.0 * t, 36.0 * t, 34.0 * t, 6.0 * t, rgb8(150, 150, 150));
         draw_rectangle(b.x + 48.0 * t, b.y + 56.0 * t, 52.0 * t, 44.0 * t, rgb8(150, 150, 150));
         text_centered(&format!("{}", i + 1), Rect::new(b.x, b.y + 112.0 * t, b.w, 24.0 * t), (22.0 * t).max(16.0), LOCKED_TEXT, false);
-        if l.boss {
+        if boss {
             draw_banner();
         }
         false

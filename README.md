@@ -61,8 +61,11 @@ like real software.
   it failed.
 - **"Show Rust code"** turns the kid's block program into real Rust code, with
   colors like a code editor. This is the bridge from blocks to typing code.
-- **Boss levels.** Each world with a World Check ends with a BOSS level, marked
-  with a red banner: one bigger challenge that uses everything the world taught.
+- **Boss fights.** Each world with a World Check ends with a boss fight in 3
+  stages. Kids break the boss's glowing crystals using the world's idea, and
+  each cleared stage knocks a third off its health bar. The miner has 5 hearts:
+  a run where it gets hurt costs half a heart, and testing a program that just
+  stops early is free.
 - **World Checks.** At the end of each world, a 10-question check asks kids to
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each
@@ -200,8 +203,9 @@ is saved by name), and edit the map:
 
 A level can also list several `maps`. One is picked at random for each run.
 
-Each world with a World Check ends with its BOSS level (`boss: true`), so put
-new levels before it.
+Each world with a World Check ends with its boss fight (a level with a `boss`),
+so put new levels before it. Boss stages also use `X` (a crystal to break) and
+`K` (the boss's 2x2 body).
 
 Then run:
 

@@ -91,6 +91,8 @@ pub fn world_for(q: &'static Question, seed: u64) -> World {
         diamonds_total: 0,
         emeralds: 0,
         emeralds_total: 0,
+        crystals: 0,
+        crystals_total: 0,
         has_portal: false,
     }
 }

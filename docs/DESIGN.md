@@ -14,6 +14,7 @@ installing, see the [README](../README.md).
 6. [Dynamic levels](#dynamic-levels)
 7. [Curriculum and level design](#curriculum-and-level-design)
    - [World Checks](#world-checks)
+   - [Boss fights](#boss-fights)
 8. [The block editor](#the-block-editor)
    - [Small screens](#small-screens)
    - [Scrolling](#scrolling)
@@ -73,13 +74,15 @@ flowchart TD
     editor["editor.rs<br/>block editor"]
     program["program.rs<br/>blocks, compiler, VM,<br/>Rust codegen, save format"]
     world["world.rs<br/>tiles, rules, conditions,<br/>random map generation"]
-    levels["levels.rs<br/>72 levels as data"]
+    levels["levels.rs<br/>72 levels and<br/>6 boss fights as data"]
+    fight["fight.rs<br/>boss fights: hearts,<br/>boss health, stars"]
     save["save.rs<br/>players + progress files"]
     art["art.rs / sound.rs<br/>procedural pixel art + sfx"]
     ui["ui.rs<br/>buttons, text, panels"]
 
     main --> users & play & save
-    play --> editor & program & world & levels & save
+    play --> editor & program & world & levels & save & fight
+    fight --> levels
     editor --> program
     program --> world
     world --> levels
@@ -87,7 +90,7 @@ flowchart TD
     play & editor & users & main --> ui & art
 ```
 
-The **logic layer** (`world`, `program`, `levels`, `save`) doesn't draw anything.
+The **logic layer** (`world`, `program`, `levels`, `fight`, `save`) doesn't draw anything.
 That lets the tests and the in-game "try other worlds" check run whole programs
 instantly with `program::simulate`. The **presentation layer** (`play`, `editor`,
 `users`, `main`, `ui`, `art`, `sound`) uses an immediate-mode style: every frame
@@ -114,7 +117,7 @@ back on for the popup itself.
 
 `world.rs` holds the game's rules. The `World` struct is a grid of `Tile`s plus
 the miner's position, facing direction, backpack (block count) and the
-gems collected/total.
+gems and boss crystals collected/total.
 
 | Tile | Walkable | Mine → | Place on it → |
 |---|---|---|---|
@@ -126,6 +129,8 @@ gems collected/total.
 | Emerald | ✓ (picks it up) | *error* | *error* |
 | Tree / Bedrock | | *error* | *error* |
 | Portal | ✓ | *error* | *error* |
+| Crystal (boss fights) | | Floor, one crystal broken | *error* |
+| Boss's body | *error: ouch* | *error: ouch* | *error* |
 
 Actions: `Forward`, `TurnLeft`, `TurnRight`, `Mine`, `Place`.
 `World::apply(action)` returns `Ok`, `Won`, or `Fail(Failure)`. Each `Failure`
@@ -249,17 +254,7 @@ starts with an intro level (enforced by a test) and ramps up:
 Sequences (10) → Loops (12) → Functions (9) → If/Else (15) 🎲 → While & algorithms (13) 🎲 → Variables (7) 🎲 → Master (6) 🎲
 ```
 
-**Boss levels.** Every world that ends with a World Check ends with a BOSS level
-(`Level::boss`): one bigger challenge that uses everything the world taught,
-with no new rules. Its tile gets a red BOSS banner (locked tiles too, so kids
-see it coming), and it opens with a "BOSS LEVEL!" intro. The Big Adventure is
-a 23-block trip past stones, emeralds, a diamond, water and lava. Diamond
-Horseshoe is nine diamonds in 12 blocks (a loop inside a loop). Shaft Master is
-four unevenly spaced shafts (a function with a loop inside, called in a loop).
-Sandstorm Run has stone, lava or nothing on every square and diamonds that may
-be beside it. The Abyss is two winding roads with stones, lava and water. Count
-Twice has two walls to count, emptying the box in between. The Nether Fortress
-is all master challenges, so it has none.
+Each world with a World Check ends with a boss fight (see [Boss fights](#boss-fights)).
 
 Inside a chapter, difficulty grows by: more steps → mixing two concepts →
 irregular layouts that defeat the previous chapter's tricks → several random
@@ -317,6 +312,41 @@ the next world. Retries are unlimited.
   squares that change between versions show their symbol with a legend
   ("? = stone or empty").
 
+### Boss fights
+
+Every world that ends with a World Check ends with a boss fight (a level with
+a `boss`, in `levels.rs`), fought in 3 stages. Each stage is a programming
+puzzle of its own (a `Level` in `Boss::stages`, with its own maps, blocks and
+solution), in an arena around the boss.
+
+- **Damaging the boss.** The boss gets its power from glowing crystals (`X`).
+  MINE breaks one, and a stage is won when every crystal is broken (and the
+  portal reached, if the stage has one). Each cleared stage takes a third off
+  the boss's health bar. The boss's body (`K`, 2x2 squares) is solid: walking
+  into it or mining it hurts.
+- **Hearts.** The miner has 5 hearts. A run where the miner gets hurt (bumps
+  into something, steps in lava or water, mines thin air, places a block with
+  an empty backpack, the program goes wrong, or a win only worked by luck)
+  costs half a heart, at most once per run. A program that just stops before
+  it's finished costs nothing, so testing part of a program stays safe.
+- **Knocked out.** At zero hearts the miner is knocked out and tries the same
+  stage again with full hearts. Stages already cleared stay cleared. Leaving
+  the level ends the fight, and the next visit starts it again.
+- **Stars** come from the hearts lost in the whole fight: 3 for at most 1
+  heart, 2 for at most half of them, otherwise 1.
+- `fight.rs` holds these rules (`Fight`) and draws nothing, so tests can play
+  whole fights. `play.rs` draws the boss over its squares, the health bar
+  across the top of the world, and the hearts along the bottom.
+
+| World | Boss | Stage 1 | Stage 2 | Stage 3 |
+|---|---|---|---|---|
+| Grassy Plains | Mossback | walk, turn and mine 2 crystals | mine a stone, bridge water | stones, lava and water all round the boss |
+| Loop Caves | Echo Bat | a row of crystals in a REPEAT | two sides: a loop in a loop | 9 crystals on 3 sides in 11 blocks |
+| Function Forest | Thornroot | a function for unevenly spaced crystals | crystals two deep: a loop inside the function | four shafts round a corner in 19 blocks |
+| Decision Desert 🎲 | Dune Scorpion | maybe-stones on a road | stone OR lava, crystals on the left | stone, lava or nothing, maybe-diamonds, two sides |
+| The Deep Dark 🎲 | The Gloom | halls of unknown length | a road that turns both ways, blocked by crystals | the same with stones, lava and water |
+| Counting Caverns 🎲 | Abacus Golem | one number used twice | count stones to find the crystal | count two walls, emptying the box between |
+
 ### Level design rules
 
 These come from bugs found while building the levels.
@@ -348,9 +378,11 @@ These come from bugs found while building the levels.
 8. **Level names are save keys.** Keep them unique and never rename one that
    kids may already have finished. If you must rename, update
    `LEGACY_ORDER`.
-9. **A world's boss stays its last level.** Every world with a World Check
-   ends with one `boss: true` level that uses everything the world taught and
-   has an intro (a test checks this). Add new levels before it.
+9. **A world's boss fight stays its last level.** Every world with a World
+   Check ends with one level that has a `boss`. Each of its 3 stages needs
+   crystals to break and the boss's 2x2 body in every map, and the tests check
+   every stage like any other level (`levels::playable`). Add new levels
+   before it.
 
 The maze layouts were generated by a search (the ignored test `find_mazes`).
 It looks for mazes that the right-hand rule solves but the simpler
@@ -656,12 +688,16 @@ symbols stripped), checks portability, writes the icon (`block-coders
 
 | Test | Guarantees |
 |---|---|
-| `every_solution_wins_in_every_world` | Every level's `solution` wins in 300 random worlds, and `par` matches its block count |
+| `every_solution_wins_in_every_world` | Every level's and boss stage's `solution` wins in 300 random worlds, and `par` matches its block count |
 | `dynamic_levels_cannot_be_hardcoded` | For each dynamic level, replaying the exact moves that won one world fails in some other world |
 | `shortcuts_fail_somewhere` | Specific tempting shortcuts fail (e.g. "mine everything", road-following on a maze) |
 | `solutions_only_use_available_conditions` | Solutions only use conditions the kid can pick in that level |
 | `level_list_is_sane` | 72 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
-| `every_world_with_a_check_ends_with_its_boss` | One boss at the end of each world with a World Check, with an intro, and none in the last world |
+| `every_world_with_a_check_ends_with_its_boss` | One boss fight at the end of each world with a World Check, with an intro; every stage has crystals and a 2x2 boss; none in the last world |
+| `boss_fights::a_hurt_run_costs_half_a_heart_once` | A run that hurts the miner costs half a heart, only once |
+| `boss_fights::knocked_out_retries_the_same_stage_with_full_hearts` | At zero hearts: full hearts, the same stage, cleared stages kept |
+| `boss_fights::each_stage_takes_a_third_and_stars_follow_hearts_lost` | Boss health in thirds, and the star thresholds |
+| `boss_fights::every_boss_can_be_defeated` | Playing each stage's solution in order defeats every boss |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
@@ -721,7 +757,7 @@ screenshots don't show real players' names.
 | One variable with a fixed name, whole numbers 0–99 | Named variables, text, negative numbers | One box is enough to teach "store, change, use". No typing means no naming UI and nothing a child types ever becomes code. The bounds mean no overflow, and REPEAT COUNT stays small. |
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
-| A BOSS level at the end of each world with a World Check: a new, harder level using everything the world taught, with a red BOSS banner | Marking each world's existing last level; a boss creature with new rules; a boss in the Nether Fortress too; names like "Plains Boss" | The owner asked for boss levels. TypeSafe chose a new capstone level (0.93, against 0.06 and 0.01), only in the six worlds with a check (0.79), a red banner across the tile's top (0.69, against 0.20 for a crown and 0.11 for recolouring the tile), and opening a world's first level with its world so the new bosses never lock out old saves (0.79). Names were close ("Plains Boss" style 0.36, adventure names 0.34, guardian names 0.30); the adventure names won, since the banner already says BOSS and there are no creatures. |
+| Boss fights in 3 stages: break the boss's crystals using the world's idea; each stage takes a third of its health | One big puzzle level per world; a boss creature with new rules and attacks | The owner asked for combat in 3 stages that each take a third of the boss's health, and a Minecraft-like heart meter. TypeSafe chose reworking #24 into fights, with armor in a second PR (0.80); half a heart for a run where the miner gets hurt, but nothing for a program that just stops early (0.96); 5 hearts (0.69, against 0.27 for 3 and 0.05 for 10); retrying the current stage at zero hearts (0.74); stars from hearts lost (0.83); and the bosses Mossback, Echo Bat, Thornroot, Dune Scorpion, The Gloom and Abacus Golem (0.64). Before that: a red banner on the tile (0.69), and opening a world's first level with its world so bosses never lock out old saves (0.79). Wording: "Oof! You ran out of hearts..." (0.47), "Ouch!" (0.49), and "... lost a third of its health. 2 more stages to go!" (0.53). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |

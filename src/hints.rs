@@ -544,6 +544,9 @@ fn problem(f: Failure) -> String {
     match f {
         Failure::Bonk(Tile::Stone | Tile::Cobble) => "The miner bumps into stone",
         Failure::Bonk(Tile::Ore) => "The miner bumps into diamond ore",
+        Failure::Bonk(Tile::Crystal) => "The miner bumps into a crystal",
+        Failure::Bonk(Tile::Boss) => "The miner runs into the boss",
+        Failure::CantMine(Tile::Boss) => "A MINE block hits the boss, which is too tough",
         Failure::Bonk(_) => "The miner walks into a wall",
         Failure::Hazard(Tile::Lava) => "The miner steps into lava",
         Failure::Hazard(_) => "The miner splashes into water",
@@ -631,7 +634,7 @@ fn changing_world_advice(level: &Level) -> String {
 /// squares away. The way there starts to the miner's LEFT."
 fn way_to_goal(w: &World) -> Option<String> {
     let targets: Vec<(i32, i32)> = if !w.collected_all() {
-        cells(w).filter(|&c| matches!(w.tile(c), Tile::Ore | Tile::Emerald)).collect()
+        cells(w).filter(|&c| matches!(w.tile(c), Tile::Ore | Tile::Emerald | Tile::Crystal)).collect()
     } else if w.has_portal {
         cells(w).filter(|&c| w.tile(c) == Tile::Portal).collect()
     } else {
@@ -641,6 +644,7 @@ fn way_to_goal(w: &World) -> Option<String> {
     let what = match w.tile(goal) {
         Tile::Ore => "the next diamond",
         Tile::Emerald => "the next emerald",
+        Tile::Crystal => "the next crystal",
         _ => "the portal",
     };
     let way = if first == w.dir {
@@ -665,7 +669,8 @@ fn cells(w: &World) -> impl Iterator<Item = (i32, i32)> + '_ {
 /// Breadth-first search from the miner to the nearest target, through squares
 /// the miner can walk on, mine or bridge. Returns (distance, first direction, target).
 fn shortest_path(w: &World, targets: &[(i32, i32)]) -> Option<(usize, Dir, (i32, i32))> {
-    let passable = |t: Tile| t.walkable() || matches!(t, Tile::Stone | Tile::Cobble | Tile::Ore | Tile::Water | Tile::Lava);
+    let passable =
+        |t: Tile| t.walkable() || matches!(t, Tile::Stone | Tile::Cobble | Tile::Ore | Tile::Crystal | Tile::Water | Tile::Lava);
     let idx = |(x, y): (i32, i32)| (y * w.w + x) as usize;
     let mut first: Vec<Option<Dir>> = vec![None; (w.w * w.h) as usize];
     let mut dist = vec![usize::MAX; (w.w * w.h) as usize];

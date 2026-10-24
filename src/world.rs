@@ -16,6 +16,11 @@ pub enum Tile {
     Bridge,
     Emerald,
     Portal,
+    /// A boss's glowing power crystal: MINE breaks it. A boss stage is won
+    /// when every crystal is broken.
+    Crystal,
+    /// Part of a boss's body. Too tough to mine or walk through.
+    Boss,
 }
 
 impl Tile {
@@ -92,6 +97,8 @@ impl Failure {
             }
             Failure::Bonk(Tile::Ore) => "Bonk! Diamond ore is in the way. MINE it to collect it!",
             Failure::Bonk(Tile::Tree) => "Bonk! You walked into a tree.",
+            Failure::Bonk(Tile::Crystal) => "Bonk! A crystal is in the way. MINE it to break it!",
+            Failure::Bonk(Tile::Boss) => "Ouch! You ran into the boss. Keep away from it, and break its crystals instead!",
             Failure::Bonk(_) => "Bonk! That's a bedrock wall - nobody can go through bedrock.",
             Failure::Hazard(Tile::Lava) => {
                 "Ouch, lava! Never step in lava. PLACE a block on it first to make a bridge."
@@ -108,6 +115,7 @@ impl Failure {
             Failure::CantMine(Tile::Bedrock) => "Bedrock is unbreakable! Nobody can mine it.",
             Failure::CantMine(Tile::Portal) => "You can't mine the portal - walk into it instead!",
             Failure::CantMine(Tile::Bridge) => "That's a bridge! Better not break it.",
+            Failure::CantMine(Tile::Boss) => "Ouch! The boss is too tough to hit directly. Break its glowing crystals instead!",
             Failure::CantMine(_) => "You can't mine water or lava!",
             Failure::NoBlocks => {
                 "Your backpack is empty - there are no blocks to place! Mine some stone first."
@@ -162,6 +170,8 @@ pub struct World {
     pub diamonds_total: u32,
     pub emeralds: u32,
     pub emeralds_total: u32,
+    pub crystals: u32,
+    pub crystals_total: u32,
     pub has_portal: bool,
 }
 
@@ -198,6 +208,8 @@ impl World {
                     'L' => Tile::Lava,
                     'E' => Tile::Emerald,
                     'P' => Tile::Portal,
+                    'X' => Tile::Crystal,
+                    'K' => Tile::Boss,
                     '^' | '>' | 'v' | '<' => {
                         pos = (x as i32, y as i32);
                         dir = match ch {
@@ -232,6 +244,7 @@ impl World {
             h,
             diamonds_total: count(Tile::Ore),
             emeralds_total: count(Tile::Emerald),
+            crystals_total: count(Tile::Crystal),
             has_portal: count(Tile::Portal) > 0,
             tiles,
             pos,
@@ -239,6 +252,7 @@ impl World {
             blocks: level.start_blocks,
             diamonds: 0,
             emeralds: 0,
+            crystals: 0,
         }
     }
 
@@ -278,7 +292,7 @@ impl World {
     }
 
     pub fn collected_all(&self) -> bool {
-        self.diamonds == self.diamonds_total && self.emeralds == self.emeralds_total
+        self.diamonds == self.diamonds_total && self.emeralds == self.emeralds_total && self.crystals == self.crystals_total
     }
 
     pub fn won(&self) -> bool {
@@ -317,6 +331,10 @@ impl World {
                     self.set(f, Tile::Floor);
                     self.diamonds += 1;
                 }
+                Tile::Crystal => {
+                    self.set(f, Tile::Floor);
+                    self.crystals += 1;
+                }
                 Tile::Floor | Tile::Emerald => return Outcome::Fail(Failure::NothingToMine),
                 other => return Outcome::Fail(Failure::CantMine(other)),
             },
@@ -346,6 +364,10 @@ impl World {
         }
         if e > 0 {
             parts.push(format!("{e} more emerald{}", if e == 1 { "" } else { "s" }));
+        }
+        let c = self.crystals_total - self.crystals;
+        if c > 0 {
+            parts.push(format!("to break {c} more crystal{}", if c == 1 { "" } else { "s" }));
         }
         let mut msg = String::from("Your program finished, but ");
         let on_portal = self.tile(self.pos) == Tile::Portal;

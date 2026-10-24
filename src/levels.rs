@@ -45,13 +45,35 @@ pub struct Level {
     /// A working solution (in the save format). Used by tests, and by
     /// parents who press Ctrl+Shift+S on a level.
     pub solution: &'static str,
-    /// The world's last and biggest challenge, using everything it taught.
-    /// Its tile gets a BOSS banner.
-    pub boss: bool,
+    /// A boss fight in 3 stages instead of one map. The level itself only
+    /// holds the fight's name, intro, hint and victory lesson; each stage is
+    /// played like a level of its own. Its tile gets a BOSS banner.
+    pub boss: Option<&'static Boss>,
+}
+
+/// Which creature a boss is, for its picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BossKind {
+    Mossback,
+    EchoBat,
+    Thornroot,
+    DuneScorpion,
+    Gloom,
+    AbacusGolem,
+}
+
+/// A boss fight: the creature, and three stages that each take a third of
+/// its health. Each stage is won by breaking all of its crystals.
+pub struct Boss {
+    pub kind: BossKind,
+    pub stages: [Level; 3],
 }
 
 impl Level {
     pub fn is_random(&self) -> bool {
+        if let Some(b) = self.boss {
+            return b.stages.iter().any(|s| s.is_random());
+        }
         self.maps.len() > 1
             || self.maps.iter().any(|m| m.iter().any(|row| row.contains(['?', '!', '*', '$', '~', '&', 'p'])))
     }
@@ -118,7 +140,7 @@ pub const BASE: Level = Level {
     lesson: "",
     floor: Floor::Grass,
     solution: "",
-    boss: false,
+    boss: None,
 };
 
 pub static LEVELS: &[Level] = &[
@@ -256,23 +278,16 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
     Level {
-        name: "The Big Adventure",
-        maps: &[&[
-            "TTTTTTTTTTTTTT", "T>#.E.#.TTTTTT", "TTTTTTT.TTTTTT", "TTTTTTD.TTTTTT", "TTTTTTTWTTTTTT", "TTTTTTT.E.LPTT",
-            "TTTTTTTTTTTTTT",
-        ]],
-        palette: P_PLACE,
-        par: 23,
+        name: "Mossback",
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Grassy Plains: one big trip that needs everything you learned here.\n\n\
-             Mine stones to fill your backpack, grab every emerald and the diamond, and build bridges over water AND lava.\n\n\
-             Plan the whole trip before you press RUN. You can do it!",
+            "BOSS FIGHT: Mossback",
+            "Mossback, a giant mossy turtle, guards the Grassy Plains! It gets its power from glowing crystals.\n\n\
+             MINE every crystal to knock a third off its health. Do it in all 3 stages to win!\n\n\
+             You have 5 hearts. When the miner gets hurt (bumping into something, lava, water, or mining thin air), you lose half a heart. A program that just stops early is safe to test.",
         )),
-        hint: "Mine both stones on your way, so your backpack has 2 blocks: one for the water, one for the lava. Turn to face the diamond before you mine it.",
-        lesson: "You beat the Grassy Plains boss! A long program is just small steps in the right order - and you planned every one.",
-        solution: "M F F F F M F F R F F R M L P F F L F F P F F",
-        boss: true,
+        hint: "Break every glowing crystal with MINE. Plan the whole path before you press RUN.",
+        lesson: "You defeated Mossback! Long programs are just small steps in the right order, and you planned every one.",
+        boss: Some(&MOSSBACK),
         ..BASE
     },
     // ======================= World 2: Loops =======================
@@ -433,26 +448,18 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
     Level {
-        name: "Diamond Horseshoe",
+        name: "Echo Bat",
         chapter: 1,
-        maps: &[&[
-            "BBBBBBBBBB", "BBBDBDBDBB", "B>......BB", "BBBBBBB.BB", "BBBBBBB.DB", "BBBBBBB.BB", "BBBBBBB.DB",
-            "BPBBBBB.BB", "B.......DB", "BDBDBDBBBB", "BBBBBBBBBB",
-        ]],
-        palette: P_LOOP,
-        par: 9,
-        max_blocks: Some(12),
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Loop Caves: nine diamonds, and only 12 blocks to get them all.\n\n\
-             Find the steps for ONE diamond. Then count the diamonds on each side, and the sides.\n\n\
-             A loop inside a loop can do it all!",
+            "BOSS FIGHT: Echo Bat",
+            "The Echo Bat repeats everything it hears, so its crystals come in patterns!\n\n\
+             Break every crystal in all 3 stages, and use loops to keep your programs short.\n\n\
+             Each time the miner gets hurt, you lose half a heart. Test carefully!",
         )),
-        hint: "Steps for one diamond: FORWARD, FORWARD, TURN LEFT, MINE, TURN RIGHT. Repeat that 3 times for a side, then TURN RIGHT. Do the whole side 3 times!",
-        lesson: "You beat the Loop Caves boss! A loop inside a loop turned 49 blocks into 9. That's the power of patterns.",
+        hint: "Look for the pattern in the crystals, and repeat it with a REPEAT block.",
+        lesson: "You defeated the Echo Bat! Loops inside loops turned a huge job into a few blocks.",
         floor: Floor::Dirt,
-        solution: "[R3 [R3 F F L M R ] R ] F",
-        boss: true,
+        boss: Some(&ECHO_BAT),
         ..BASE
     },
     // ======================= World 3: Functions =======================
@@ -568,25 +575,17 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
     Level {
-        name: "Shaft Master",
+        name: "Thornroot",
         chapter: 2,
-        maps: &[&[
-            "TTTTTTTTT", "TTDTDTTTT", "TT#T#TTTT", "TT#T#TTTT", "T>...TTTT", "TTTT.##DT", "TTTT.TTTT", "TTTP.##DT",
-            "TTTTTTTTT",
-        ]],
-        palette: P_FUNC,
-        par: 17,
-        max_blocks: Some(20),
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Function Forest: four mine shafts, each with a diamond at the end, and only 20 blocks.\n\n\
-             The shafts aren't evenly spaced, so a plain loop won't do. Teach the miner a new word for digging ONE shaft, and use it everywhere.\n\n\
-             Tip: your FUNCTION can have a REPEAT inside it!",
+            "BOSS FIGHT: Thornroot",
+            "Thornroot's crystals grow in the same shapes again and again, but never evenly spaced.\n\n\
+             Teach the miner new words with a FUNCTION to break them all, in 3 stages.\n\n\
+             Each time the miner gets hurt, you lose half a heart. Test carefully!",
         )),
-        hint: "Function: dig the shaft on your LEFT and come back facing the same way. The shafts make the same uneven pattern on both sides of the corner, so REPEAT 2 can do both sides!",
-        lesson: "You beat the Function Forest boss! One function, used four times, inside a loop. Real programmers build big programs exactly like this.",
-        solution: "[R2 C F C R ] F / F L [R2 M F ] M R R [R2 F ] L",
-        boss: true,
+        hint: "Find the job you do again and again, and put it in your FUNCTION.",
+        lesson: "You defeated Thornroot! Functions let you build big programs out of small pieces you can reuse.",
+        boss: Some(&THORNROOT),
         ..BASE
     },
     // ======================= World 4: If / Else =======================
@@ -828,28 +827,18 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
     Level {
-        name: "Sandstorm Run",
+        name: "Dune Scorpion",
         chapter: 3,
-        maps: &[&[
-            "TTTTTTTTT", "TT$$$$$TT", "T>&.&.&TT", "TTTTTT.$T", "TTTTTT&$T", "TTTTTT.$T", "TTTTTT&$T", "TTTTTTPTT",
-            "TTTTTTTTT",
-        ]],
-        palette: P_IFELSE,
-        conds: &[Cond::StoneAhead, Cond::LavaAhead, Cond::DiamondAhead, Cond::PathAhead],
-        par: 12,
-        max_blocks: Some(15),
-        start_blocks: 5,
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Decision Desert: a road where any square might be stone, lava or nothing, with diamonds that might be beside it.\n\n\
-             It's different every time, so your program has to check, not guess.\n\n\
-             Use IF / ELSE for what's ahead, and IF to look for diamonds on your left!",
+            "BOSS FIGHT: Dune Scorpion",
+            "The Dune Scorpion's arena changes every time!\n\n\
+             Your program has to look before it acts. Use IF and IF / ELSE to break its crystals in all 3 stages.\n\n\
+             Each time the miner gets hurt, you lose half a heart. Test carefully!",
         )),
-        hint: "Every step: IF stone ahead, MINE. ELSE, IF lava ahead, PLACE BLOCK. Then FORWARD, TURN LEFT, IF diamond ahead MINE, TURN RIGHT. That's 5 steps, a turn right, and 5 more.",
-        lesson: "You beat the Decision Desert boss! Your program made dozens of decisions on its own - that's how programs handle a world they can't predict.",
+        hint: "Check what's ahead before every step: IF stone, MINE. IF lava, PLACE BLOCK.",
+        lesson: "You defeated the Dune Scorpion! Your program made its own decisions in a world it couldn't predict.",
         floor: Floor::Sand,
-        solution: "[R2 [R5 [E3 M | [I5 P ] ] F L [I4 M ] R ] R ]",
-        boss: true,
+        boss: Some(&DUNE_SCORPION),
         ..BASE
     },
     // ======================= World 5: While loops & algorithms =======================
@@ -1102,34 +1091,18 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
     Level {
-        name: "The Abyss",
+        name: "The Gloom",
         chapter: 4,
-        maps: &[
-            &[
-                "BBBBBBBBBBBBBB", "B>.?.!..BBBBBB", "BBBBBBB.BBBBBB", "BBBBBBB~BBBBBB", "BBBBBBB.BBBBBB",
-                "BBBBBBB..!..BB", "BBBBBBBBBBB.BB", "BBBBBBBBBBB?BB", "BBBBBP.*.~..BB", "BBBBBBBBBBBBBB",
-            ],
-            &[
-                "BBBBBBBBBBBBBB", "B>.!.BBBBBBBBB", "BBBB.BBBBB..PB", "BBBB?BBBBB.BBB", "BBBB.BBBBB!BBB",
-                "BBBB~BBBBB.BBB", "BBBB..*.&..BBB", "BBBBBBBBBBBBBB", "BBBBBBBBBBBBBB", "BBBBBBBBBBBBBB",
-            ],
-        ],
-        palette: P_ALL,
-        conds: ALL_CONDS,
-        par: 12,
-        max_blocks: Some(15),
-        start_blocks: 5,
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Deep Dark: a long, winding road that changes every time, with stones, lava AND water in the way.\n\n\
-             You can't count the steps, so use WHILE to keep going until the portal. Clear what's ahead, then follow the road, turning left or right.\n\n\
-             This is everything the Deep Dark taught you, all at once!",
+            "BOSS FIGHT: The Gloom",
+            "The Gloom hides in the dark, where you can't count the steps.\n\n\
+             Use WHILE loops and algorithms to find and break its crystals in all 3 stages.\n\n\
+             Each time the miner gets hurt, you lose half a heart. Test carefully!",
         )),
-        hint: "WHILE not at portal: IF stone ahead, MINE. IF lava ahead, PLACE BLOCK. IF water ahead, PLACE BLOCK. Then follow the road like in Deep Dark Gauntlet.",
-        lesson: "You beat the Deep Dark boss! One short algorithm handled a long road it had never seen. That's what makes algorithms so powerful.",
+        hint: "Use WHILE to keep going until the job is done, however long the road is.",
+        lesson: "You defeated The Gloom! Your algorithms worked on roads they had never seen.",
         floor: Floor::Deepslate,
-        solution: "[W7 [I3 M ] [I5 P ] [I6 P ] [E0 F | [E1 L | R ] ] ]",
-        boss: true,
+        boss: Some(&THE_GLOOM),
         ..BASE
     },
     // ======================= World 6: Variables =======================
@@ -1249,29 +1222,18 @@ pub static LEVELS: &[Level] = &[
     },
 
     Level {
-        name: "Count Twice",
+        name: "Abacus Golem",
         chapter: 5,
-        maps: &[
-            &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...###......B", "B............B", "B......B.....B", "B......P.....B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
-            &["BBBBBBBBBBBBBB", "B>###BBBBBBBBB", "B............B", "B............B", "B....##......B", "B......B.....B", "B......P.....B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
-            &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...####.....B", "B............B", "B............B", "B.......B....B", "B.......P....B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
-            &["BBBBBBBBBBBBBB", "B>####BBBBBBBB", "B............B", "B............B", "B............B", "B.....###....B", "B............B", "B........B...B", "B........P...B", "B............B", "BBBBBBBBBBBBBB"],
-        ],
-        palette: P_COUNT,
-        conds: &[Cond::StoneAhead, Cond::PathAhead],
-        par: 11,
-        max_blocks: Some(12),
         intro: Some((
-            "BOSS LEVEL!",
-            "This is the BOSS of the Counting Caverns: TWO stone walls, and a portal hiding out in the open where no sensor can find it.\n\n\
-             Count the stones in each wall, and use each count to know how far to go.\n\n\
-             Careful: the box keeps its number! Empty it with SET COUNT TO 0 before you count again.",
+            "BOSS FIGHT: Abacus Golem",
+            "The Abacus Golem loves numbers!\n\n\
+             Use your count variable to break exactly the right crystals in all 3 stages.\n\n\
+             Each time the miner gets hurt, you lose half a heart. Test carefully!",
         )),
-        hint: "Count the first wall like in Stone Counter, walk down that far, turn left, then SET COUNT TO 0. The second wall is the same job again - so REPEAT 2! Finish with one FORWARD.",
-        lesson: "You beat the Counting Caverns boss! You reset your variable and used it again, like a scoreboard that starts every new game at 0.",
+        hint: "Put the number you need in the count box, and use REPEAT COUNT TIMES.",
+        lesson: "You defeated the Abacus Golem! You counted, reset and reused a variable like a real programmer.",
         floor: Floor::Dirt,
-        solution: "[R2 [W3 M F A1 ] R [V0 F ] L S0 ] F",
-        boss: true,
+        boss: Some(&ABACUS_GOLEM),
         ..BASE
     },
     // ======================= World 7: Master challenges =======================
@@ -1400,3 +1362,379 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
 ];
+
+/// Every level that's actually played: each ordinary level, and each boss's
+/// three stages.
+#[cfg(test)]
+pub fn playable() -> impl Iterator<Item = &'static Level> {
+    LEVELS.iter().flat_map(|l| match l.boss {
+        Some(b) => b.stages.iter().collect::<Vec<_>>(),
+        None => vec![l],
+    })
+}
+
+// ======================= Boss fights =======================
+// Each boss is fought in 3 stages. Every stage is its own puzzle: break all of
+// the boss's glowing crystals (X) to take a third of its health. The boss's
+// body (K) is solid, and bumping into it hurts.
+
+const P_SET_MINE: &[Kind] = &[Forward, TurnLeft, TurnRight, Mine, Set, RepeatCount];
+
+pub static MOSSBACK: Boss = Boss {
+    kind: BossKind::Mossback,
+    stages: [
+        Level {
+            name: "Mossback 1",
+            maps: &[&["TTTTTTTT", "T>..XTTT", "TTT.KKTT", "TTT.KKTT", "TTT.XTTT", "TTTTTTTT"]],
+            palette: P_PLACE,
+            par: 9,
+            hint: "Walk up to the first crystal and MINE it. Then go down the side of Mossback and turn to face the second one.",
+            lesson: "Crack! A crystal on its shell broke.",
+            solution: "F F M R F F F L M",
+            ..BASE
+        },
+        Level {
+            name: "Mossback 2",
+            maps: &[&["TTTTTTTTT", "T>#.XTTTT", "TTT.KKTTT", "TTTWKKTTT", "TTT.XTTTT", "TTTTTTTTT"]],
+            palette: P_PLACE,
+            par: 11,
+            intro: Some((
+                "Stage 2",
+                "Mossback has hidden behind water! Mine the stone first, so you have a block to build a bridge.",
+            )),
+            hint: "MINE the stone to get a block. Break the top crystal, then PLACE a block on the water before you walk over it.",
+            lesson: "Splash! Your bridge got you to its second crystal.",
+            solution: "M F F M R F P F F L M",
+            ..BASE
+        },
+        Level {
+            name: "Mossback 3",
+            maps: &[&["TTTTTTTT", "T>#.X#.T", "TTTTKKLT", "TTTTKKXT", "TTTTXW.T", "TTTTTTTT"]],
+            palette: P_PLACE,
+            par: 18,
+            intro: Some((
+                "Stage 3",
+                "Last stage! Three crystals all around Mossback, with lava AND water in the way. You'll need two blocks, so mine both stones on your way.",
+            )),
+            hint: "Go all the way round Mossback: mine the stones and crystals in your way, and PLACE a block on the lava and the water.",
+            lesson: "Mossback's last crystal shattered!",
+            solution: "M F F M F M F F R P F M F F R P F M",
+            ..BASE
+        },
+    ],
+};
+
+pub static ECHO_BAT: Boss = Boss {
+    kind: BossKind::EchoBat,
+    stages: [
+        Level {
+            name: "Echo Bat 1",
+            chapter: 1,
+            maps: &[&["BBBBBBBB", "B>XXXXBB", "BBKKBBBB", "BBKKBBBB", "BBBBBBBB"]],
+            palette: P_LOOP,
+            par: 3,
+            max_blocks: Some(4),
+            hint: "Mine a crystal, step forward. Mine, step... That's a pattern! Put it in a REPEAT.",
+            lesson: "Your loop smashed a whole row of crystals!",
+            floor: Floor::Dirt,
+            solution: "[R4 M F ]",
+            ..BASE
+        },
+        Level {
+            name: "Echo Bat 2",
+            chapter: 1,
+            maps: &[&["BBBBBBB", "B>XXXBB", "BBBBXBB", "BKKBXBB", "BKKBXBB", "BBBBBBB"]],
+            palette: P_LOOP,
+            par: 5,
+            max_blocks: Some(6),
+            intro: Some((
+                "Stage 2",
+                "The crystals go round a corner now, and you only have 6 blocks. A loop inside a loop can do it!",
+            )),
+            hint: "One side is: REPEAT 3 (MINE, FORWARD). Then TURN RIGHT. There are 2 sides, so put all of that in a REPEAT 2.",
+            lesson: "Two sides, one loop inside another!",
+            floor: Floor::Dirt,
+            solution: "[R2 [R3 M F ] R ]",
+            ..BASE
+        },
+        Level {
+            name: "Echo Bat 3",
+            chapter: 1,
+            maps: &[&[
+                "BBBBBBBBBB", "BBBXBXBXBB", "B>......BB", "BBBBBBB.BB", "BBBKKBB.XB", "BBBKKBB.BB", "BBBBBBB.XB",
+                "BBBBBBB.BB", "B.......XB", "BXBXBXBBBB", "BBBBBBBBBB",
+            ]],
+            palette: P_LOOP,
+            par: 8,
+            max_blocks: Some(11),
+            intro: Some((
+                "Stage 3",
+                "Last stage! Nine crystals on three sides, and only 11 blocks. Find the steps for ONE crystal, then one side, then all three sides.",
+            )),
+            hint: "Steps for one crystal: FORWARD, FORWARD, TURN LEFT, MINE, TURN RIGHT. Do that 3 times, then TURN RIGHT. Do the whole side 3 times!",
+            lesson: "Nine crystals with a loop inside a loop!",
+            floor: Floor::Dirt,
+            solution: "[R3 [R3 F F L M R ] R ]",
+            ..BASE
+        },
+    ],
+};
+
+pub static THORNROOT: Boss = Boss {
+    kind: BossKind::Thornroot,
+    stages: [
+        Level {
+            name: "Thornroot 1",
+            chapter: 2,
+            maps: &[&["TTTTTTTTT", "TTXTXTTXT", "T>......T", "TTTKKTTTT", "TTTKKTTTT", "TTTTTTTTT"]],
+            palette: P_FUNC,
+            par: 11,
+            max_blocks: Some(12),
+            hint: "Teach a new word: TURN LEFT, MINE, TURN RIGHT breaks a crystal on your left. The gaps between crystals are different, so walk them in MAIN.",
+            lesson: "Your new word broke three crystals!",
+            solution: "F C [R2 F ] C [R3 F ] C / L M R",
+            ..BASE
+        },
+        Level {
+            name: "Thornroot 2",
+            chapter: 2,
+            maps: &[&["TTTTTTTTT", "TTXTTXXTT", "TTXTTXXTT", "T>.....TT", "TTKKTTTTT", "TTKKTTTTT", "TTTTTTTTT"]],
+            palette: P_FUNC,
+            par: 16,
+            max_blocks: Some(20),
+            intro: Some((
+                "Stage 2",
+                "Thornroot grew its crystals two deep! Your function has to dig in, break both, and come back facing the same way.",
+            )),
+            hint: "Function: TURN LEFT, REPEAT 2 (MINE, FORWARD), turn around, REPEAT 2 (FORWARD), TURN LEFT. Call it at each pair of crystals.",
+            lesson: "A function with a loop inside - clever!",
+            solution: "F C [R3 F ] C F C / L [R2 M F ] R R [R2 F ] L",
+            ..BASE
+        },
+        Level {
+            name: "Thornroot 3",
+            chapter: 2,
+            maps: &[&[
+                "TTTTTTTTT", "TTXTXTTTT", "TT#T#TTTT", "TT#T#TTTT", "T>...TTTT", "TKKT.##XT", "TKKT.TTTT", "TTTT.##XT",
+                "TTTTTTTTT",
+            ]],
+            palette: P_FUNC,
+            par: 16,
+            max_blocks: Some(19),
+            intro: Some((
+                "Stage 3",
+                "Last stage! Four shafts, each with stone and a crystal at the end, around a corner. Only 19 blocks!",
+            )),
+            hint: "Function: FORWARD, then dig the shaft on your LEFT and come back facing the same way. The shafts make the same uneven pattern on both sides of the corner, so REPEAT 2 can do both sides!",
+            lesson: "Thornroot's roots are cut!",
+            solution: "[R2 C F C R ] / F L [R2 M F ] M R R [R2 F ] L",
+            ..BASE
+        },
+    ],
+};
+
+pub static DUNE_SCORPION: Boss = Boss {
+    kind: BossKind::DuneScorpion,
+    stages: [
+        Level {
+            name: "Dune Scorpion 1",
+            chapter: 3,
+            maps: &[&["TTTTTTTTTT", "T>??????XT", "TTTKKTTTTT", "TTTKKTTTTT", "TTTTTTTTTT"]],
+            palette: P_IFELSE,
+            conds: STONE_CONDS,
+            par: 5,
+            max_blocks: Some(7),
+            hint: "Any square might have a stone. REPEAT 6: IF stone ahead, MINE. Then FORWARD. At the end, MINE the crystal.",
+            lesson: "You checked before every step!",
+            floor: Floor::Sand,
+            solution: "[R6 [I3 M ] F ] M",
+            ..BASE
+        },
+        Level {
+            name: "Dune Scorpion 2",
+            chapter: 3,
+            maps: &[&["TTTTTTTTTT", "TTTXTXTXTT", "T>*.*.*.TT", "TTTTKKTTTT", "TTTTKKTTTT", "TTTTTTTTTT"]],
+            palette: P_IFELSE,
+            conds: &[Cond::StoneAhead, Cond::LavaAhead, Cond::PathAhead],
+            par: 9,
+            max_blocks: Some(11),
+            start_blocks: 3,
+            intro: Some((
+                "Stage 2",
+                "The Dune Scorpion stirred up the sand! Each marked square is stone OR lava. Crystals hide to your left.",
+            )),
+            hint: "REPEAT 3: IF stone ahead, MINE. ELSE, PLACE BLOCK. Then FORWARD, FORWARD, TURN LEFT, MINE, TURN RIGHT.",
+            lesson: "IF / ELSE got you past stone and lava!",
+            floor: Floor::Sand,
+            solution: "[R3 [E3 M | P ] F F L M R ]",
+            ..BASE
+        },
+        Level {
+            name: "Dune Scorpion 3",
+            chapter: 3,
+            maps: &[&[
+                "TTTTTTTTT", "TT$$$$$TT", "T>&.&.&XT", "TTTTTT.$T", "TTTTTT&$T", "TTTTTT.$T", "TTTTTT&$T", "TTTTTT.$T",
+                "TTKKTTXTT", "TTKKTTTTT", "TTTTTTTTT",
+            ]],
+            palette: P_IFELSE,
+            conds: &[Cond::StoneAhead, Cond::LavaAhead, Cond::DiamondAhead, Cond::PathAhead],
+            par: 13,
+            max_blocks: Some(16),
+            start_blocks: 5,
+            intro: Some((
+                "Stage 3",
+                "Last stage! Any road square might be stone, lava or nothing, diamonds might be on your left, and a crystal waits at the end of each side.",
+            )),
+            hint: "Every step: IF stone ahead, MINE. ELSE, IF lava ahead, PLACE BLOCK. Then FORWARD, look LEFT for a diamond, and turn back. After 5 steps, MINE the crystal and TURN RIGHT. Do it all twice!",
+            lesson: "The Dune Scorpion's crystals are dust!",
+            floor: Floor::Sand,
+            solution: "[R2 [R5 [E3 M | [I5 P ] ] F L [I4 M ] R ] M R ]",
+            ..BASE
+        },
+    ],
+};
+
+pub static THE_GLOOM: Boss = Boss {
+    kind: BossKind::Gloom,
+    stages: [
+        Level {
+            name: "The Gloom 1",
+            chapter: 4,
+            maps: &[
+                &["BBBBBBBBBB", "B>...BBBBB", "BBBB.BBBBB", "BBBB.BBBBB", "BBBBXBBBBB", "BKKBBBBBBB", "BKKBBBBBBB", "BBBBBBBBBB"],
+                &["BBBBBBBBBB", "B>.....BBB", "BBBBBB.BBB", "BBBBBBXBBB", "BBBBBBBBBB", "BKKBBBBBBB", "BKKBBBBBBB", "BBBBBBBBBB"],
+                &["BBBBBBBBBB", "B>.BBBBBBB", "BB.BBBBBBB", "BB.BBBBBBB", "BB.BBBBBBB", "BBXBKKBBBB", "BBBBKKBBBB", "BBBBBBBBBB"],
+            ],
+            palette: P_ALL,
+            conds: &[Cond::PathAhead],
+            par: 6,
+            max_blocks: Some(8),
+            hint: "The halls change length every time. WHILE path ahead, FORWARD. TURN RIGHT. Do the WHILE again, then MINE the crystal.",
+            lesson: "WHILE found the crystal, however far away it was!",
+            floor: Floor::Deepslate,
+            solution: "[W0 F ] R [W0 F ] M",
+            ..BASE
+        },
+        Level {
+            name: "The Gloom 2",
+            chapter: 4,
+            maps: &[
+                &[
+                    "BBBBBBBBBB", "B>.X..BBBB", "BBBBB.BBBB", "BBBBB.BBBB", "BBBBBXBPBB", "BBBBB.B.BB", "BBBBB...BB",
+                    "BKKBBBBBBB", "BKKBBBBBBB", "BBBBBBBBBB", "BBBBBBBBBB",
+                ],
+                &[
+                    "BBBBBBBBBB", "BBBBBPBBBB", "BBBBB.BBBB", "B..X..BBBB", "B.BBBBBBBB", "BXBBBBBBBB", "B.BBBBBBBB",
+                    "B.BBBBBBBB", "B^BBKKBBBB", "BBBBKKBBBB", "BBBBBBBBBB",
+                ],
+            ],
+            palette: P_ALL,
+            conds: PATH_CONDS,
+            par: 8,
+            max_blocks: Some(10),
+            intro: Some((
+                "Stage 2",
+                "The Gloom made a winding road that turns both ways, and crystals block it. Break them all, then reach the portal.",
+            )),
+            hint: "WHILE not at portal: IF path ahead, FORWARD. ELSE IF path to left, TURN LEFT. ELSE IF path to right, TURN RIGHT. ELSE, a crystal is blocking the road, so MINE it!",
+            lesson: "Your algorithm knew what to do at every dead end!",
+            floor: Floor::Deepslate,
+            solution: "[W7 [E0 F | [E1 L | [E2 R | M ] ] ] ]",
+            ..BASE
+        },
+        Level {
+            name: "The Gloom 3",
+            chapter: 4,
+            maps: &[
+                &[
+                    "BBBBBBBBBBBBBB", "B>.?X!..BBBBBB", "BBBBBBB.BBBBBB", "BKKBBBB~BBBBBB", "BKKBBBB.BBBBBB",
+                    "BBBBBBB..!X.BB", "BBBBBBBBBBB.BB", "BBBBBBBBBBB?BB", "BBBBBP.*X~..BB", "BBBBBBBBBBBBBB",
+                ],
+                &[
+                    "BBBBBBBBBBBBBB", "B>X!.BBBBBBBBB", "BBBB.BBBBB..PB", "BBBB?BBBBBXBBB", "BBBB.BBBBB!BBB",
+                    "BBBB~BBBBB.BBB", "BBBB..*X&..BBB", "BKKBBBBBBBBBBB", "BKKBBBBBBBBBBB", "BBBBBBBBBBBBBB",
+                ],
+            ],
+            palette: P_ALL,
+            conds: ALL_CONDS,
+            par: 14,
+            max_blocks: Some(17),
+            start_blocks: 5,
+            intro: Some((
+                "Stage 3",
+                "Last stage! A winding road that changes every time, with stones, lava, water AND crystals in the way.",
+            )),
+            hint: "WHILE not at portal: clear what's ahead (MINE stone, PLACE BLOCK on lava or water). Then follow the road, and MINE when nothing else works.",
+            lesson: "The Gloom's last crystal went dark!",
+            floor: Floor::Deepslate,
+            solution: "[W7 [I3 M ] [I5 P ] [I6 P ] [E0 F | [E1 L | [E2 R | M ] ] ] ]",
+            ..BASE
+        },
+    ],
+};
+
+pub static ABACUS_GOLEM: Boss = Boss {
+    kind: BossKind::AbacusGolem,
+    stages: [
+        Level {
+            name: "Abacus Golem 1",
+            chapter: 5,
+            maps: &[&["BBBBBBBB", "B>XXXXBB", "BBBBBXBB", "BKKBBXBB", "BKKBBXBB", "BBBBBXBB", "BBBBBBBB"]],
+            palette: P_SET_MINE,
+            par: 8,
+            max_blocks: Some(9),
+            hint: "Both rows have 4 crystals. SET COUNT TO 4, then REPEAT COUNT TIMES: MINE, FORWARD. Turn right, and use count again!",
+            lesson: "One number in the box, used twice!",
+            floor: Floor::Dirt,
+            solution: "S4 [V0 M F ] R [V0 M F ]",
+            ..BASE
+        },
+        Level {
+            name: "Abacus Golem 2",
+            chapter: 5,
+            // Bedrock above and below the crystal, so walking down until
+            // something's in the way never finds it.
+            maps: &[
+                &["BBBBBBBBBBBB", "B>##BBBBBBBB", "B...B......B", "B...X......B", "B...B......B", "B..........B", "B.......KK.B", "B.......KK.B", "BBBBBBBBBBBB"],
+                &["BBBBBBBBBBBB", "B>###BBBBBBB", "B..........B", "B....B.....B", "B....X.....B", "B....B.....B", "B.......KK.B", "B.......KK.B", "BBBBBBBBBBBB"],
+                &["BBBBBBBBBBBB", "B>####BBBBBB", "B..........B", "B..........B", "B.....B....B", "B.....X....B", "B.....B.KK.B", "B.......KK.B", "BBBBBBBBBBBB"],
+            ],
+            palette: P_COUNT,
+            conds: STONE_CONDS,
+            par: 9,
+            max_blocks: Some(10),
+            intro: Some((
+                "Stage 2",
+                "The Abacus Golem hid its crystal out in the open, where no sensor can find it. Count the stones as you mine them: that's how far down the crystal is!",
+            )),
+            hint: "WHILE stone ahead: MINE, FORWARD, ADD 1 TO COUNT. Then TURN RIGHT, REPEAT COUNT TIMES: FORWARD. TURN LEFT and MINE.",
+            lesson: "Your count told you exactly where to go!",
+            floor: Floor::Dirt,
+            solution: "[W3 M F A1 ] R [V0 F ] L M",
+            ..BASE
+        },
+        Level {
+            name: "Abacus Golem 3",
+            chapter: 5,
+            maps: &[
+                &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...###......B", "B............B", "B......B.....B", "B......X.....B", "B............B", "BKK..........B", "BKK..........B", "BBBBBBBBBBBBBB"],
+                &["BBBBBBBBBBBBBB", "B>###BBBBBBBBB", "B............B", "B............B", "B....##......B", "B......B.....B", "B......X.....B", "B............B", "BKK..........B", "BKK..........B", "BBBBBBBBBBBBBB"],
+                &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...####.....B", "B............B", "B............B", "B.......B....B", "B.......X....B", "BKK..........B", "BKK..........B", "BBBBBBBBBBBBBB"],
+                &["BBBBBBBBBBBBBB", "B>####BBBBBBBB", "B............B", "B............B", "B............B", "B.....###....B", "B............B", "B........B...B", "BKK......X...B", "BKK..........B", "BBBBBBBBBBBBBB"],
+            ],
+            palette: P_COUNT,
+            conds: STONE_CONDS,
+            par: 11,
+            max_blocks: Some(12),
+            intro: Some((
+                "Stage 3",
+                "Last stage! TWO stone walls, and the crystal hides out in the open where no sensor can find it. Careful: the box keeps its number! Empty it with SET COUNT TO 0 before you count again.",
+            )),
+            hint: "Count the first wall, walk down that far, turn left, then SET COUNT TO 0. The second wall is the same job - so REPEAT 2! Then MINE the crystal in front of you.",
+            lesson: "You counted, reset and counted again!",
+            floor: Floor::Dirt,
+            solution: "[R2 [W3 M F A1 ] R [V0 F ] L S0 ] M",
+            ..BASE
+        },
+    ],
+};
