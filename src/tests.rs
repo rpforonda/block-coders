@@ -1069,6 +1069,10 @@ mod smart_hints {
 
         let (_, h) = hints("Crystal Staircase", "F R F L F R F L F R F L F R F L F");
         assert!(h[2].text.starts_with("Put those 4 blocks inside a REPEAT 4 block"), "{h:?}");
+
+        // Three in a row: a REPEAT 3 saves just one block.
+        let (_, h) = hints("Around the Bend", "[R5 F ] R F F F");
+        assert_eq!(h[2].text, "Put that block inside a REPEAT 3 block. That saves 1 block!");
     }
 
     #[test]
