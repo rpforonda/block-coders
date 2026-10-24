@@ -1670,6 +1670,7 @@ mod contrast {
         for bg in [rgb(60, 60, 60), rgb(70, 70, 70)] {
             assert!(contrast(LOCKED_TEXT, bg) >= 4.5);
         }
+        assert!(contrast(BOSS_BANNER, WHITE) >= MIN_CONTRAST, "BOSS banner: {}", contrast(BOSS_BANNER, WHITE));
         for ch in &CHAPTERS {
             let c = rgb(ch.color.0, ch.color.1, ch.color.2);
             let chosen = readable_bg(c);

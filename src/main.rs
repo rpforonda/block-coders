@@ -210,7 +210,7 @@ fn level_tile(ui: &mut Ui, progress: &Progress, i: usize, b: Rect) -> bool {
     let banner = Rect::new(b.x + 6.0 * t, b.y + 6.0 * t, b.w - 12.0 * t, (30.0 * t).max(22.0));
     let below_banner = banner.y + banner.h - b.y;
     let draw_banner = || {
-        draw_rectangle(banner.x, banner.y, banner.w, banner.h, rgb8(185, 35, 35));
+        draw_rectangle(banner.x, banner.y, banner.w, banner.h, BOSS_BANNER);
         draw_rectangle_lines(banner.x, banner.y, banner.w, banner.h, 2.0, BLACK);
         text_centered("BOSS", banner, (22.0 * t).max(16.0), WHITE, true);
     };

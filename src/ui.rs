@@ -209,6 +209,8 @@ pub const TITLE_ON_LIGHT: Color = Color { r: 125.0 / 255.0, g: 65.0 / 255.0, b: 
 pub const WARN_ON_LIGHT: Color = Color { r: 140.0 / 255.0, g: 45.0 / 255.0, b: 5.0 / 255.0, a: 1.0 };
 /// Grey text on the dark grey of something locked, 5:1.
 pub const LOCKED_TEXT: Color = Color { r: 180.0 / 255.0, g: 180.0 / 255.0, b: 180.0 / 255.0, a: 1.0 };
+/// The red of a boss level's BOSS banner, under white text: 6.3:1.
+pub const BOSS_BANNER: Color = Color { r: 185.0 / 255.0, g: 35.0 / 255.0, b: 35.0 / 255.0, a: 1.0 };
 /// The light grey of `panel`.
 pub const PANEL: Color = Color { r: 198.0 / 255.0, g: 198.0 / 255.0, b: 198.0 / 255.0, a: 1.0 };
 /// The dark grey of `dark_panel`.

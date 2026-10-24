@@ -200,6 +200,9 @@ is saved by name), and edit the map:
 
 A level can also list several `maps`. One is picked at random for each run.
 
+Each world with a World Check ends with its BOSS level (`boss: true`), so put
+new levels before it.
+
 Then run:
 
 ```sh
