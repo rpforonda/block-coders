@@ -4,6 +4,7 @@
 
 use crate::art::{draw_tex, shade, Art};
 use crate::editor::kind_color;
+use crate::items::Look;
 use crate::layout::{self, Answer, Canvas, CheckLayout};
 use crate::levels::{Level, BASE, CHAPTERS, LEVELS};
 use crate::program::{Kind, Node, Program};
@@ -170,7 +171,7 @@ pub struct CheckScreen {
     results: Vec<bool>,
     picked: Option<usize>,
     phase: Phase,
-    shirt: usize,
+    look: Look,
     passed_before: bool,
     rng: Rng,
     /// On phones, which program (by its place in the shown order) is on screen.
@@ -197,7 +198,7 @@ fn floor_of(chapter: usize) -> Floor {
 const LETTERS: [&str; 4] = ["A", "B", "C", "D"];
 
 impl CheckScreen {
-    pub fn new(chapter: usize, progress: &mut Progress, shirt: usize) -> CheckScreen {
+    pub fn new(chapter: usize, progress: &mut Progress, look: Look) -> CheckScreen {
         let mut s = CheckScreen {
             chapter,
             questions: Vec::new(),
@@ -205,7 +206,7 @@ impl CheckScreen {
             results: Vec::new(),
             picked: None,
             phase: Phase::Intro,
-            shirt,
+            look,
             passed_before: progress.checks[chapter],
             rng: Rng::new(fresh_seed()),
             shown: 0,
@@ -383,7 +384,7 @@ impl CheckScreen {
             draw_program_panel(p, r, art, if program_choices { "This program:" } else { "" });
         }
         if let Some(r) = l.map {
-            draw_map(q, r, art, floor, self.shirt, &spot_marks);
+            draw_map(q, r, art, floor, &self.look, &spot_marks);
         }
 
         // The choices.
@@ -729,7 +730,7 @@ fn random_meaning(c: char) -> Option<&'static str> {
 /// The question's map. Squares that change between versions show their
 /// symbol instead of a tile. `marks` are lettered answer squares; once
 /// answered they turn green (right) or red (picked, wrong).
-fn draw_map(q: &'static Question, area: Rect, art: &Art, floor: Floor, shirt: usize, marks: &[(i32, i32, &str, Option<bool>)]) {
+fn draw_map(q: &'static Question, area: Rect, art: &Art, floor: Floor, look: &Look, marks: &[(i32, i32, &str, Option<bool>)]) {
     dark_panel(area);
     let world = world_for(q, 0);
     let mut legend: Vec<&str> = Vec::new();
@@ -772,7 +773,7 @@ fn draw_map(q: &'static Question, area: Rect, art: &Art, floor: Floor, shirt: us
     // The miner and the way it faces.
     let (cx, cy) = (ox + (world.pos.0 as f32 + 0.5) * ts, oy + (world.pos.1 as f32 + 0.5) * ts);
     let sh = ts * 0.88;
-    draw_tex(art.player(shirt, world.dir), cx - sh * 0.375, cy - sh / 2.0, sh * 0.75, sh, WHITE);
+    art.miner(look, world.dir, Rect::new(cx - sh * 0.375, cy - sh / 2.0, sh * 0.75, sh), WHITE);
     let a = world.dir.angle().to_radians();
     let d = vec2(a.sin(), -a.cos());
     let perp = vec2(-d.y, d.x);

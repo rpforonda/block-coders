@@ -21,6 +21,7 @@ installing, see the [README](../README.md).
    - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
+    - [The Wardrobe](#the-wardrobe)
 11. [Packaging](#packaging)
 12. [Testing](#testing)
 13. [Key decisions](#key-decisions)
@@ -77,28 +78,30 @@ flowchart TD
     levels["levels.rs<br/>72 levels and<br/>6 boss fights as data"]
     fight["fight.rs<br/>boss fights: hearts,<br/>boss health, stars"]
     save["save.rs<br/>players + progress files"]
+    wardrobe["items.rs / wardrobe.rs<br/>Wardrobe items + screen"]
     art["art.rs / sound.rs<br/>procedural pixel art + sfx"]
     ui["ui.rs<br/>buttons, text, panels"]
 
-    main --> users & play & save
+    main --> users & play & save & wardrobe
+    wardrobe --> save
     play --> editor & program & world & levels & save & fight
     fight --> levels
     editor --> program
     program --> world
     world --> levels
     users --> save
-    play & editor & users & main --> ui & art
+    play & editor & users & main & wardrobe --> ui & art
 ```
 
-The **logic layer** (`world`, `program`, `levels`, `fight`, `save`) doesn't draw anything.
+The **logic layer** (`world`, `program`, `levels`, `fight`, `save`, `items`) doesn't draw anything.
 That lets the tests and the in-game "try other worlds" check run whole programs
 instantly with `program::simulate`. The **presentation layer** (`play`, `editor`,
-`users`, `main`, `ui`, `art`, `sound`) uses an immediate-mode style: every frame
+`users`, `wardrobe`, `main`, `ui`, `art`, `sound`) uses an immediate-mode style: every frame
 it reads input, updates, and redraws from the current state.
 
 ### Screens and the frame loop
 
-`main.rs` holds a `Screen` enum (`Title`, `Users`, `Select`, `Play`). Each
+`main.rs` holds a `Screen` enum (`Title`, `Users`, `Select`, `Play`, `Check`, `Wardrobe`). Each
 frame:
 
 1. It computes a scale factor and sets a camera, so all drawing happens in a
@@ -608,7 +611,10 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   function of (x, y): hashed noise for grass and stone, sine patterns for
   animated water, lava and portal frames, and ASCII pixel-art for the miner,
   Bit, the pickaxe and the app icon. The miner is generated in eight shirt
-  colors, one per player choice.
+  colors, one per player choice. Wardrobe items (`art/outfits.rs`) are drawn
+  in layers over it: patterned shirts and armor are see-through overlays
+  built from the miner's own pixel rows, so they line up in every facing, and
+  tools are small sprites held in the hand. Glows and sparkles are drawn live.
 - **Procedural sound** (`sound.rs`). Square, triangle and noise waves with a
   short fade-in/out are written into in-memory WAV files at startup.
 - **Animation.** Each action makes an `Anim` (move, turn, mine, place, bump,
@@ -625,6 +631,7 @@ Files live in `$XDG_DATA_HOME/block-coders/` (usually
 users.txt        id;shirt;name           one line per player
                  next;<id>               the next id to hand out (ids are never reused)
 user-<id>.txt    gen;<n>                 how many times this player started over
+                 look;<item keys>        what they wear in the Wardrobe (older versions skip it)
                  level name;stars;program  one line per level
                  check:<n>;<passed 0/1>;<last question ids>  one line per World Check
 ```
@@ -662,6 +669,51 @@ user-<id>.txt    gen;<n>                 how many times this player started over
   from `users.txt` was deleted elsewhere and is never written back. The
   read-merge-write isn't atomic, but it runs in one go on each save, so two
   tabs would have to save in the same instant to collide.
+
+### The Wardrobe
+
+Stars unlock shirts, armor and tools for the miner (`items.rs`). Kids open it
+from the level select by clicking their own miner and name.
+
+- **Stars are never spent.** An item unlocks once the player's total reaches
+  its number, so the star count still says how well they code, and nothing
+  earned can be lost.
+- **Cooler items need more stars.** One of each kind unlocks at 10 stars, then
+  something about every 10 stars up to 60, then the gaps widen. The best item
+  needs all 216, which is three stars on every level. Tests keep each kind's
+  items in order and the last one at every star.
+
+  | Stars | Shirts | Armor | Tools |
+  |---|---|---|---|
+  | 0 | 8 classic colors | | |
+  | 10 | Sailor Stripes | Leather Armor | Torch (glows) |
+  | 20 | | Chainmail | |
+  | 25 | | | Lantern (glows) |
+  | 30 | Lumberjack Plaid | | |
+  | 40 | | Iron Armor | |
+  | 50 | | | Golden Pickaxe |
+  | 60 | | Gold Armor | |
+  | 75 | Galaxy Shirt (twinkles) | | |
+  | 90 | | | Diamond Pickaxe (sparkles) |
+  | 110 | | Diamond Armor | |
+  | 130 | | | Magic Wand (sparkles) |
+  | 150 | | Netherite Armor (glints) | |
+  | 170 | Rainbow Shirt (animated) | | |
+  | 185 | | | Crystal Staff (glows) |
+  | 216 | | Superstar Armor (golden glow) | |
+
+- **Locked items show** dimmed, with the stars they need. The line under the
+  grid says how many more stars that is, or what unlocks next.
+- **Each card shows the miner** in their shirt with just that item on, so the
+  item is easy to see. The preview turns the miner around in the full outfit.
+- **Saving.** The outfit is the `look;` line in the player's file, saved by
+  item key (like levels, so items can be reordered). Two tabs merge it like
+  programs: one tab's change wins over a tab that didn't change it.
+- **After "Start over"** the outfit stays chosen, but items the player no
+  longer has the stars for are drawn plain (`Outfit::unlocked`) until they're
+  earned again. Ctrl+U, which opens every level, also opens every item.
+- **News.** A win that crosses an item's number says so in the victory popup
+  ("New in your Wardrobe: Iron Armor!").
 
 ## Packaging
 
@@ -702,6 +754,12 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
+| `wardrobe::items_unlock_in_order_up_to_every_star` | Unique item keys, only the classic shirts are free, each kind's items need more stars than the last, one of each kind at 10, the best needs all 216 |
+| `wardrobe::outfits_save_and_hide_items_not_yet_earned` | Outfits round-trip, unknown keys are skipped, locked items are hidden, classic shirts recolor the body |
+| `wardrobe::wins_announce_what_they_unlocked` | Which items a win unlocks, and which is next |
+| `wardrobe::every_item_has_art_of_its_kind` | Every item has art for its slot |
+| `wardrobe::wardrobe_fits_every_screen` | The Wardrobe on every test screen: on screen, no overlaps, tabs and cards big enough to tap |
+| `outfits_are_saved_merged_and_survive_starting_over` | Outfits are saved, two tabs don't undo each other, older versions skip the line, "Start over" hides but keeps the outfit |
 | `read_only_saves_never_change` | While the autopilot's read-only switch is on, adding, deleting or resetting players changes nothing on disk |
 | `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
 | `a_stale_tab_never_overwrites_newer_progress` | A tab playing the same player as another never erases its stars or checks, undoes its "Start over", or writes a deleted player back or into a new player |
@@ -761,6 +819,17 @@ screenshots don't show real players' names.
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |
+
+| Stars unlock Wardrobe items and are never spent | Stars as a currency | The star count keeps meaning "how well you've coded", and nothing earned can be lost. TypeSafe: 0.98. |
+| Shirts, armor and a held tool | Also hats and glow effects as their own slots; capes too | The three kinds the request named. Helmets come with armor, and glows come with the top items. TypeSafe: 0.47 (five slots 0.37, six 0.16). |
+| Tools, not weapons | Swords and tools; only swords | The miner never fights, it mines and builds. TypeSafe: 0.97. A sword would be one more item and its art. |
+| Front-loaded unlocks | Evenly spaced; mostly over 100 stars | Early unlocks keep beginners going, and the best items still need most of the 216 stars. TypeSafe: 0.95. |
+| Items drawn as layers over the miner | One combined texture per outfit | Nothing to rebuild or cache when an outfit changes, and animated items just pick a frame. TypeSafe: 0.74. |
+| The level select's miner and name open the Wardrobe | A button on each player card | The star count is right beside it. TypeSafe: 0.51 (0.49). |
+| Called "Wardrobe" | Locker, Star Shop, Marketplace | Nothing is bought. TypeSafe: 0.41 (Locker 0.32, Star Shop 0.25, Marketplace 0.03). |
+| The outfit is saved in the player's progress file | A line in `users.txt` | It merges between tabs like programs, and survives "Start over". TypeSafe: 0.72. |
+| After "Start over", locked items are hidden, not removed | Clearing the outfit | They come back as the stars are earned again. TypeSafe: 0.74. |
+| Unlocks are announced in the victory popup | A "NEW" badge on the button; no notice | No extra saved state, and the news comes the moment it's earned. TypeSafe: 0.49 (badge 0.48). |
 
 ## Limitations and future work
 

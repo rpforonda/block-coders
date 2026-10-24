@@ -80,6 +80,10 @@ like real software.
 - **Up to 6 players.** Each player has their own name, a miner with their own
   shirt color, and their own saved progress. Any player can *start over* from
   level 1.
+- **The Wardrobe.** Stars unlock new shirts, armor and tools for your miner,
+  from Sailor Stripes, Leather Armor and a Torch at 10 stars up to Superstar
+  Armor for all 216. Stars are never spent. Click your miner on the level
+  select to dress up.
 - **Readable on phones.** On a small screen every screen reshapes instead of
   shrinking. Upright, the play screen stacks the world, Bit, then the blocks
   and the program, with RUN along the bottom; the level select shows a list of

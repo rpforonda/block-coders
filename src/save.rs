@@ -6,7 +6,8 @@
 //!   users.txt          one line per player: id ; shirt colour ; name
 //!                      plus "next;<id>", the next id to hand out
 //!   user-<id>.txt      that player's progress: level name ; stars ; program
-//!                      plus "gen;<n>", how many times they've started over
+//!                      plus "gen;<n>", how many times they've started over,
+//!                      and "look;<item keys>", what they wear (see `items.rs`)
 //!
 //! Two browser tabs (or game windows) can have the same saves open at once, so
 //! every write re-reads what's stored and merges into it rather than writing
@@ -17,6 +18,7 @@
 //! every field and never panics on bad data.
 
 use crate::check::CHECKS;
+use crate::items::{Look, Outfit};
 use crate::levels::{CHAPTERS, LEGACY_ORDER, LEVELS};
 use crate::questions::BANKS;
 use crate::program::Program;
@@ -289,6 +291,9 @@ pub struct Progress {
     /// The question ids of each check's most recent attempt, so a retry can
     /// pick different ones.
     pub check_last: Vec<Vec<String>>,
+    /// What they chose in the Wardrobe, including items locked again after
+    /// "Start over" (see `look`).
+    pub outfit: Outfit,
     /// Bumped by every "Start over", so a tab that loaded the player before a
     /// reset elsewhere knows its stars are out of date.
     generation: u32,
@@ -296,6 +301,7 @@ pub struct Progress {
     /// ones this tab changed (and so should win) when merging on save.
     base_programs: Vec<String>,
     base_check_last: Vec<Vec<String>>,
+    base_outfit: Outfit,
 }
 
 impl Progress {
@@ -308,9 +314,11 @@ impl Progress {
             unlock_all: false,
             checks: vec![false; CHECKS],
             check_last: vec![Vec::new(); CHECKS],
+            outfit: Outfit::default(),
             generation: 0,
             base_programs: vec![String::new(); n],
             base_check_last: vec![Vec::new(); CHECKS],
+            base_outfit: Outfit::default(),
         }
     }
 
@@ -322,6 +330,7 @@ impl Progress {
     fn rebase(&mut self) {
         self.base_programs = (0..LEVELS.len()).map(|i| self.program_text(i)).collect();
         self.base_check_last = self.check_last.clone();
+        self.base_outfit = self.outfit;
     }
 
     pub fn load(user: u32) -> Progress {
@@ -330,6 +339,10 @@ impl Progress {
         for line in text.lines() {
             if let Some(g) = line.strip_prefix("gen;") {
                 p.generation = g.trim_end_matches(';').trim().parse().unwrap_or(0);
+                continue;
+            }
+            if let Some(keys) = line.strip_prefix("look;") {
+                p.outfit = Outfit::parse(keys);
                 continue;
             }
             let mut parts = line.splitn(3, ';');
@@ -390,6 +403,9 @@ impl Progress {
                 self.check_last[c] = stored.check_last[c].clone();
             }
         }
+        if self.outfit == self.base_outfit {
+            self.outfit = stored.outfit;
+        }
         self.write_out(user);
         Saved::Done
     }
@@ -398,7 +414,7 @@ impl Progress {
     /// write worked: otherwise the next save would think this tab's unsaved
     /// changes were already stored and take the older stored programs instead.
     fn write_out(&mut self, user: u32) -> bool {
-        let mut out = format!("gen;{}\n", self.generation);
+        let mut out = format!("gen;{}\nlook;{}\n", self.generation, self.outfit.serialize());
         for (i, level) in LEVELS.iter().enumerate() {
             out.push_str(&format!("{};{};{}\n", level.name, self.stars[i], self.program_text(i)));
         }
@@ -413,11 +429,20 @@ impl Progress {
     }
 
     /// Wipes all stars and programs so the player starts from level 1 again.
+    /// The outfit stays, and its items come back as the stars are earned again.
     pub fn reset(&mut self) {
+        let mut outfit = self.outfit;
+        let changed = self.outfit != self.base_outfit;
         *self = Progress::new(self.user);
+        self.outfit = outfit;
         let Some(user) = self.user else { return };
         if Users::listed(user) {
-            self.generation = Progress::load(user).generation.wrapping_add(1);
+            let stored = Progress::load(user);
+            if !changed {
+                outfit = stored.outfit;
+            }
+            self.outfit = outfit;
+            self.generation = stored.generation.wrapping_add(1);
             if !self.write_out(user) {
                 *self = Progress::load(user); // didn't happen; don't pretend it did
             }
@@ -464,6 +489,17 @@ impl Progress {
 
     pub fn total_stars(&self) -> u32 {
         self.stars.iter().map(|&s| s as u32).sum()
+    }
+
+    /// The stars that count in the Wardrobe (all of them with the unlock-all key).
+    pub fn wardrobe_stars(&self) -> u32 {
+        if self.unlock_all { crate::items::max_stars() } else { self.total_stars() }
+    }
+
+    /// How their miner looks: shirt color `shirt` (picked when they joined)
+    /// plus whatever Wardrobe items they've unlocked and are wearing.
+    pub fn look(&self, shirt: usize) -> Look {
+        Look { shirt, outfit: self.outfit.unlocked(self.wardrobe_stars()) }
     }
 
     /// How many levels have been completed.
