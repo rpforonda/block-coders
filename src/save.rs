@@ -426,10 +426,12 @@ impl Progress {
 
     /// Everything up to (and one past) the furthest level beaten is open, as
     /// long as its world is open. So new levels added before a player's
-    /// furthest level never lock them out.
+    /// furthest level never lock them out. A world's first level opens with
+    /// the world, so passing a World Check early opens the next world.
     pub fn unlocked(&self, i: usize) -> bool {
         let furthest = self.stars.iter().rposition(|&s| s > 0);
-        let reached = i == 0 || furthest.is_some_and(|f| i <= f + 1);
+        let first_of_world = i == 0 || LEVELS[i - 1].chapter != LEVELS[i].chapter;
+        let reached = first_of_world || furthest.is_some_and(|f| i <= f + 1);
         self.unlock_all || (reached && self.world_open(LEVELS[i].chapter))
     }
 

@@ -7,9 +7,26 @@ fn level(name: &str) -> &'static crate::levels::Level {
     LEVELS.iter().find(|l| l.name == name).unwrap_or_else(|| panic!("no level {name}"))
 }
 
+/// Every world with a World Check ends with one boss level, which introduces
+/// itself. The last world is all master challenges, so it has none.
+#[test]
+fn every_world_with_a_check_ends_with_its_boss() {
+    for c in 0..crate::levels::CHAPTERS.len() {
+        let levels: Vec<_> = LEVELS.iter().filter(|l| l.chapter == c).collect();
+        let bosses: Vec<&str> = levels.iter().filter(|l| l.boss).map(|l| l.name).collect();
+        if c < crate::check::CHECKS {
+            let last = levels.last().unwrap();
+            assert_eq!(bosses, [last.name], "world {}: one boss, at the end", c + 1);
+            assert!(last.intro.is_some(), "{}: a boss introduces itself", last.name);
+        } else {
+            assert!(bosses.is_empty(), "world {}: no boss", c + 1);
+        }
+    }
+}
+
 #[test]
 fn level_list_is_sane() {
-    assert_eq!(LEVELS.len(), 66);
+    assert_eq!(LEVELS.len(), 72);
     let mut names: Vec<&str> = LEVELS.iter().map(|l| l.name).collect();
     assert!(names.iter().all(|n| !n.contains(';') && !n.is_empty()));
     names.sort();
@@ -160,6 +177,11 @@ fn shortcuts_fail_somewhere() {
         ("Echo Hall", "[W0 F ] R [W0 F ] L [W0 F ]"),       // walks to the walls instead of counting
         ("Echo Hall", "[W0 F ] R [R3 F ] L [R6 F ] F"),     // a fixed distance
         ("Stone Counter", "[W3 M F ] R [W0 F ] L [W0 F ]"),
+        ("Sandstorm Run", "[R2 [R5 [E3 M | P ] F L [I4 M ] R ] R ]"),         // places a block on empty squares
+        ("Sandstorm Run", "[R2 [R5 [E3 M | [I5 P ] ] F L M R ] R ]"),         // mines without a diamond
+        ("The Abyss", "[W7 [I3 M ] [I5 P ] [E0 F | [E1 L | R ] ] ]"),         // ignores water
+        ("Count Twice", "[R2 [W3 M F A1 ] R [V0 F ] L ] F"),                   // never empties the box
+        ("Count Twice", "[W3 M F A1 ] R [V0 F ] L [W3 M F ] F R [W0 F ]"),    // walks down to the portal's row
     ];
     for (name, src) in cases {
         let l = level(name);
@@ -256,12 +278,14 @@ fn players_can_be_created_reset_and_deleted() {
     assert!(old.programs[idx("The Long Hallway")].is_some());
     // New levels inserted before an old player's furthest level stay open.
     assert!(old.unlocked(idx("Zig Zag")) && old.unlocked(idx("Maybe a Stone")));
-    // The next level is the first of the last world, which needs every World Check.
-    assert!(!old.unlocked(idx("Deep Dark Gauntlet") + 1));
+    // A boss level added after their furthest level opens for them, but the
+    // next world still needs its World Check.
+    assert!(old.unlocked(idx("The Abyss")));
+    assert!(!old.unlocked(idx("The Abyss") + 1));
     let mut checked = Progress::load(9);
     checked.checks.iter_mut().for_each(|c| *c = true);
-    assert!(checked.unlocked(idx("Deep Dark Gauntlet") + 1));
-    assert!(!checked.unlocked(idx("Deep Dark Gauntlet") + 2));
+    assert!(checked.unlocked(idx("The Abyss") + 1));
+    assert!(!checked.unlocked(idx("The Abyss") + 2));
     // ...and saving writes names, which load back the same.
     old.save();
     assert!(std::fs::read_to_string(data.join("user-9.txt")).unwrap().contains("The Long Hallway;3;"));
@@ -1392,6 +1416,8 @@ mod variables {
             // A lawnmower sweep finds the portal without counting, but needs more blocks.
             ("Echo Hall", "[R3 [W0 F ] R F R [W0 F ] L F L ]"),
             ("Stone Counter", "R [R3 [W0 F ] L F L [W0 F ] R F R ]"),
+            // Counting both walls without REPEAT 2.
+            ("Count Twice", "[W3 M F A1 ] R [V0 F ] L S0 [W3 M F A1 ] R [V0 F ] L F"),
         ];
         for (name, src) in too_long {
             let l = level(name);

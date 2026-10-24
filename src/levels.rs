@@ -45,6 +45,9 @@ pub struct Level {
     /// A working solution (in the save format). Used by tests, and by
     /// parents who press Ctrl+Shift+S on a level.
     pub solution: &'static str,
+    /// The world's last and biggest challenge, using everything it taught.
+    /// Its tile gets a BOSS banner.
+    pub boss: bool,
 }
 
 impl Level {
@@ -115,6 +118,7 @@ pub const BASE: Level = Level {
     lesson: "",
     floor: Floor::Grass,
     solution: "",
+    boss: false,
 };
 
 pub static LEVELS: &[Level] = &[
@@ -249,6 +253,26 @@ pub static LEVELS: &[Level] = &[
         hint: "Mine both stones first so your backpack has 2 blocks. Then turn and bridge the water one square at a time.",
         lesson: "You planned ahead: collect first, use later. Good programs often gather what they need before they start!",
         solution: "M F M F R P F P F F L F",
+        ..BASE
+    },
+    Level {
+        name: "The Big Adventure",
+        maps: &[&[
+            "TTTTTTTTTTTTTT", "T>#.E.#.TTTTTT", "TTTTTTT.TTTTTT", "TTTTTTD.TTTTTT", "TTTTTTTWTTTTTT", "TTTTTTT.E.LPTT",
+            "TTTTTTTTTTTTTT",
+        ]],
+        palette: P_PLACE,
+        par: 23,
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Grassy Plains: one big trip that needs everything you learned here.\n\n\
+             Mine stones to fill your backpack, grab every emerald and the diamond, and build bridges over water AND lava.\n\n\
+             Plan the whole trip before you press RUN. You can do it!",
+        )),
+        hint: "Mine both stones on your way, so your backpack has 2 blocks: one for the water, one for the lava. Turn to face the diamond before you mine it.",
+        lesson: "You beat the Grassy Plains boss! A long program is just small steps in the right order - and you planned every one.",
+        solution: "M F F F F M F F R F F R M L P F F L F F P F F",
+        boss: true,
         ..BASE
     },
     // ======================= World 2: Loops =======================
@@ -408,6 +432,29 @@ pub static LEVELS: &[Level] = &[
         solution: "[R2 [R4 F ] R F R [R4 F ] L F L ]",
         ..BASE
     },
+    Level {
+        name: "Diamond Horseshoe",
+        chapter: 1,
+        maps: &[&[
+            "BBBBBBBBBB", "BBBDBDBDBB", "B>......BB", "BBBBBBB.BB", "BBBBBBB.DB", "BBBBBBB.BB", "BBBBBBB.DB",
+            "BPBBBBB.BB", "B.......DB", "BDBDBDBBBB", "BBBBBBBBBB",
+        ]],
+        palette: P_LOOP,
+        par: 9,
+        max_blocks: Some(12),
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Loop Caves: nine diamonds, and only 12 blocks to get them all.\n\n\
+             Find the steps for ONE diamond. Then count the diamonds on each side, and the sides.\n\n\
+             A loop inside a loop can do it all!",
+        )),
+        hint: "Steps for one diamond: FORWARD, FORWARD, TURN LEFT, MINE, TURN RIGHT. Repeat that 3 times for a side, then TURN RIGHT. Do the whole side 3 times!",
+        lesson: "You beat the Loop Caves boss! A loop inside a loop turned 49 blocks into 9. That's the power of patterns.",
+        floor: Floor::Dirt,
+        solution: "[R3 [R3 F F L M R ] R ] F",
+        boss: true,
+        ..BASE
+    },
     // ======================= World 3: Functions =======================
     Level {
         name: "Teach a New Word",
@@ -518,6 +565,28 @@ pub static LEVELS: &[Level] = &[
         hint: "Make a function that digs the shaft on your LEFT. For shafts going down, turn around first - then down is on your left!",
         lesson: "You reused one function in a clever new way by changing which way you faced. That's creative coding!",
         solution: "[R2 F C F F R R C R R F ] F / L M F M R R F L",
+        ..BASE
+    },
+    Level {
+        name: "Shaft Master",
+        chapter: 2,
+        maps: &[&[
+            "TTTTTTTTT", "TTDTDTTTT", "TT#T#TTTT", "TT#T#TTTT", "T>...TTTT", "TTTT.##DT", "TTTT.TTTT", "TTTP.##DT",
+            "TTTTTTTTT",
+        ]],
+        palette: P_FUNC,
+        par: 17,
+        max_blocks: Some(20),
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Function Forest: four mine shafts, each with a diamond at the end, and only 20 blocks.\n\n\
+             The shafts aren't evenly spaced, so a plain loop won't do. Teach the miner a new word for digging ONE shaft, and use it everywhere.\n\n\
+             Tip: your FUNCTION can have a REPEAT inside it!",
+        )),
+        hint: "Function: dig the shaft on your LEFT and come back facing the same way. The shafts make the same uneven pattern on both sides of the corner, so REPEAT 2 can do both sides!",
+        lesson: "You beat the Function Forest boss! One function, used four times, inside a loop. Real programmers build big programs exactly like this.",
+        solution: "[R2 C F C R ] F / F L [R2 M F ] M R R [R2 F ] L",
+        boss: true,
         ..BASE
     },
     // ======================= World 4: If / Else =======================
@@ -753,9 +822,34 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(13),
         start_blocks: 6,
         hint: "Function: IF stone ahead mine, ELSE place. Then forward twice. Use it in two loops with a turn between.",
-        lesson: "You beat the Decision Desert! IF / ELSE inside a function inside a loop - that's serious coding.",
+        lesson: "IF / ELSE inside a function inside a loop - that's serious coding! Only the Decision Desert's BOSS is left.",
         floor: Floor::Sand,
         solution: "[R3 C ] R [R3 C ] / [E3 M | P ] F F",
+        ..BASE
+    },
+    Level {
+        name: "Sandstorm Run",
+        chapter: 3,
+        maps: &[&[
+            "TTTTTTTTT", "TT$$$$$TT", "T>&.&.&TT", "TTTTTT.$T", "TTTTTT&$T", "TTTTTT.$T", "TTTTTT&$T", "TTTTTTPTT",
+            "TTTTTTTTT",
+        ]],
+        palette: P_IFELSE,
+        conds: &[Cond::StoneAhead, Cond::LavaAhead, Cond::DiamondAhead, Cond::PathAhead],
+        par: 12,
+        max_blocks: Some(15),
+        start_blocks: 5,
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Decision Desert: a road where any square might be stone, lava or nothing, with diamonds that might be beside it.\n\n\
+             It's different every time, so your program has to check, not guess.\n\n\
+             Use IF / ELSE for what's ahead, and IF to look for diamonds on your left!",
+        )),
+        hint: "Every step: IF stone ahead, MINE. ELSE, IF lava ahead, PLACE BLOCK. Then FORWARD, TURN LEFT, IF diamond ahead MINE, TURN RIGHT. That's 5 steps, a turn right, and 5 more.",
+        lesson: "You beat the Decision Desert boss! Your program made dozens of decisions on its own - that's how programs handle a world they can't predict.",
+        floor: Floor::Sand,
+        solution: "[R2 [R5 [E3 M | [I5 P ] ] F L [I4 M ] R ] R ]",
+        boss: true,
         ..BASE
     },
     // ======================= World 5: While loops & algorithms =======================
@@ -1002,9 +1096,40 @@ pub static LEVELS: &[Level] = &[
         max_blocks: Some(14),
         start_blocks: 3,
         hint: "Inside a WHILE loop: IF stone ahead, mine. IF lava ahead, place. Then follow the road like in Winding Road.",
-        lesson: "You conquered the Deep Dark! Loops, decisions and algorithms all working together.",
+        lesson: "Loops, decisions and algorithms all working together! Only the Deep Dark's BOSS is left.",
         floor: Floor::Deepslate,
         solution: "[W7 [I3 M ] [I5 P ] [E0 F | [E1 L | R ] ] ]",
+        ..BASE
+    },
+    Level {
+        name: "The Abyss",
+        chapter: 4,
+        maps: &[
+            &[
+                "BBBBBBBBBBBBBB", "B>.?.!..BBBBBB", "BBBBBBB.BBBBBB", "BBBBBBB~BBBBBB", "BBBBBBB.BBBBBB",
+                "BBBBBBB..!..BB", "BBBBBBBBBBB.BB", "BBBBBBBBBBB?BB", "BBBBBP.*.~..BB", "BBBBBBBBBBBBBB",
+            ],
+            &[
+                "BBBBBBBBBBBBBB", "B>.!.BBBBBBBBB", "BBBB.BBBBB..PB", "BBBB?BBBBB.BBB", "BBBB.BBBBB!BBB",
+                "BBBB~BBBBB.BBB", "BBBB..*.&..BBB", "BBBBBBBBBBBBBB", "BBBBBBBBBBBBBB", "BBBBBBBBBBBBBB",
+            ],
+        ],
+        palette: P_ALL,
+        conds: ALL_CONDS,
+        par: 12,
+        max_blocks: Some(15),
+        start_blocks: 5,
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Deep Dark: a long, winding road that changes every time, with stones, lava AND water in the way.\n\n\
+             You can't count the steps, so use WHILE to keep going until the portal. Clear what's ahead, then follow the road, turning left or right.\n\n\
+             This is everything the Deep Dark taught you, all at once!",
+        )),
+        hint: "WHILE not at portal: IF stone ahead, MINE. IF lava ahead, PLACE BLOCK. IF water ahead, PLACE BLOCK. Then follow the road like in Deep Dark Gauntlet.",
+        lesson: "You beat the Deep Dark boss! One short algorithm handled a long road it had never seen. That's what makes algorithms so powerful.",
+        floor: Floor::Deepslate,
+        solution: "[W7 [I3 M ] [I5 P ] [I6 P ] [E0 F | [E1 L | R ] ] ]",
+        boss: true,
         ..BASE
     },
     // ======================= World 6: Variables =======================
@@ -1123,6 +1248,32 @@ pub static LEVELS: &[Level] = &[
         ..BASE
     },
 
+    Level {
+        name: "Count Twice",
+        chapter: 5,
+        maps: &[
+            &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...###......B", "B............B", "B......B.....B", "B......P.....B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>###BBBBBBBBB", "B............B", "B............B", "B....##......B", "B......B.....B", "B......P.....B", "B............B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>##BBBBBBBBBB", "B............B", "B...####.....B", "B............B", "B............B", "B.......B....B", "B.......P....B", "B............B", "B............B", "BBBBBBBBBBBBBB"],
+            &["BBBBBBBBBBBBBB", "B>####BBBBBBBB", "B............B", "B............B", "B............B", "B.....###....B", "B............B", "B........B...B", "B........P...B", "B............B", "BBBBBBBBBBBBBB"],
+        ],
+        palette: P_COUNT,
+        conds: &[Cond::StoneAhead, Cond::PathAhead],
+        par: 11,
+        max_blocks: Some(12),
+        intro: Some((
+            "BOSS LEVEL!",
+            "This is the BOSS of the Counting Caverns: TWO stone walls, and a portal hiding out in the open where no sensor can find it.\n\n\
+             Count the stones in each wall, and use each count to know how far to go.\n\n\
+             Careful: the box keeps its number! Empty it with SET COUNT TO 0 before you count again.",
+        )),
+        hint: "Count the first wall like in Stone Counter, walk down that far, turn left, then SET COUNT TO 0. The second wall is the same job again - so REPEAT 2! Finish with one FORWARD.",
+        lesson: "You beat the Counting Caverns boss! You reset your variable and used it again, like a scoreboard that starts every new game at 0.",
+        floor: Floor::Dirt,
+        solution: "[R2 [W3 M F A1 ] R [V0 F ] L S0 ] F",
+        boss: true,
+        ..BASE
+    },
     // ======================= World 7: Master challenges =======================
     Level {
         name: "Lava Sea",

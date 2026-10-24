@@ -246,8 +246,20 @@ Levels are data (`levels.rs`). They're grouped into seven chapters. Each chapter
 starts with an intro level (enforced by a test) and ramps up:
 
 ```
-Sequences (9) → Loops (11) → Functions (8) → If/Else (14) 🎲 → While & algorithms (12) 🎲 → Variables (6) 🎲 → Master (6) 🎲
+Sequences (10) → Loops (12) → Functions (9) → If/Else (15) 🎲 → While & algorithms (13) 🎲 → Variables (7) 🎲 → Master (6) 🎲
 ```
+
+**Boss levels.** Every world that ends with a World Check ends with a BOSS level
+(`Level::boss`): one bigger challenge that uses everything the world taught,
+with no new rules. Its tile gets a red BOSS banner (locked tiles too, so kids
+see it coming), and it opens with a "BOSS LEVEL!" intro. The Big Adventure is
+a 23-block trip past stones, emeralds, a diamond, water and lava. Diamond
+Horseshoe is nine diamonds in 12 blocks (a loop inside a loop). Shaft Master is
+four unevenly spaced shafts (a function with a loop inside, called in a loop).
+Sandstorm Run has stone, lava or nothing on every square and diamonds that may
+be beside it. The Abyss is two winding roads with stones, lava and water. Count
+Twice has two walls to count, emptying the box in between. The Nether Fortress
+is all master challenges, so it has none.
 
 Inside a chapter, difficulty grows by: more steps → mixing two concepts →
 irregular layouts that defeat the previous chapter's tricks → several random
@@ -584,8 +596,9 @@ user-<id>.txt    gen;<n>                 how many times this player started over
 - **Saved by level name, not number**, so levels can be inserted or reordered
   freely. Older saves that numbered levels 0–19 are converted on load using
   `LEGACY_ORDER`. An even older single-player `progress.txt` becomes "Player 1".
-- **Unlocking:** level *i* is open if it's level 1, or if *i* ≤ (furthest level
-  with stars) + 1, and its world is open (see [World Checks](#world-checks)).
+- **Unlocking:** level *i* is open if it's the first level of its world, or if
+  *i* ≤ (furthest level with stars) + 1, and its world is open (see
+  [World Checks](#world-checks)).
   So beating a level opens everything before it, and new levels added early in
   the list never lock out a player who already went further.
 - **Writes happen on every program edit and every win.** The files are tiny, and
@@ -643,7 +656,8 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `dynamic_levels_cannot_be_hardcoded` | For each dynamic level, replaying the exact moves that won one world fails in some other world |
 | `shortcuts_fail_somewhere` | Specific tempting shortcuts fail (e.g. "mine everything", road-following on a maze) |
 | `solutions_only_use_available_conditions` | Solutions only use conditions the kid can pick in that level |
-| `level_list_is_sane` | 66 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
+| `level_list_is_sane` | 72 levels, unique names (save keys), chapters in order, intro on each chapter's first level, hint and lesson present |
+| `every_world_with_a_check_ends_with_its_boss` | One boss at the end of each world with a World Check, with an intro, and none in the last world |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
@@ -703,6 +717,7 @@ screenshots don't show real players' names.
 | One variable with a fixed name, whole numbers 0–99 | Named variables, text, negative numbers | One box is enough to teach "store, change, use". No typing means no naming UI and nothing a child types ever becomes code. The bounds mean no overflow, and REPEAT COUNT stays small. |
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
+| A BOSS level at the end of each world with a World Check: a new, harder level using everything the world taught, with a red BOSS banner | Marking each world's existing last level; a boss creature with new rules; a boss in the Nether Fortress too; names like "Plains Boss" | The owner asked for boss levels. TypeSafe chose a new capstone level (0.93, against 0.06 and 0.01), only in the six worlds with a check (0.79), a red banner across the tile's top (0.69, against 0.20 for a crown and 0.11 for recolouring the tile), and opening a world's first level with its world so the new bosses never lock out old saves (0.79). Names were close ("Plains Boss" style 0.36, adventure names 0.34, guardian names 0.30); the adventure names won, since the banner already says BOSS and there are no creatures. |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |

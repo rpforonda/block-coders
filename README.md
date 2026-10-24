@@ -3,7 +3,7 @@
 **A blocky, Minecraft-style coding adventure that teaches kids (ages ~8–12) to
 think like programmers.** It's written in Rust.
 
-Kids snap together code blocks to guide a miner through 66 levels. They dig
+Kids snap together code blocks to guide a miner through 72 levels. They dig
 tunnels, collect diamonds, bridge lava and find their way to the portal. Each
 world introduces one big programming idea. As they go, the game shows them that
 their blocks are real code.
@@ -14,16 +14,16 @@ their blocks are real code.
 
 | World | Levels | Concept | What it looks like |
 |---|---|---|---|
-| 1. Grassy Plains | 1–9 | **Sequences** | Step-by-step instructions, turning, mining, building bridges |
-| 2. Loop Caves | 10–20 | **Loops** | `repeat`, spotting patterns, loops inside loops |
-| 3. Function Forest | 21–28 | **Functions** | Write a set of steps once, then call it anywhere |
-| 4. Decision Desert 🎲 | 29–42 | **If / Else** | Look at the world, then decide what to do |
-| 5. The Deep Dark 🎲 | 43–54 | **While loops & algorithms** | Roads of unknown length, and solving mazes with the right-hand rule |
-| 6. Counting Caverns 🎲 | 55–60 | **Variables** | A box called `count` that holds a number: set it, add to it, and repeat that many times |
-| 7. Nether Fortress 🎲 | 61–66 | **Master challenges** | Everything combined |
+| 1. Grassy Plains | 1–10 | **Sequences** | Step-by-step instructions, turning, mining, building bridges |
+| 2. Loop Caves | 11–22 | **Loops** | `repeat`, spotting patterns, loops inside loops |
+| 3. Function Forest | 23–31 | **Functions** | Write a set of steps once, then call it anywhere |
+| 4. Decision Desert 🎲 | 32–46 | **If / Else** | Look at the world, then decide what to do |
+| 5. The Deep Dark 🎲 | 47–59 | **While loops & algorithms** | Roads of unknown length, and solving mazes with the right-hand rule |
+| 6. Counting Caverns 🎲 | 60–66 | **Variables** | A box called `count` that holds a number: set it, add to it, and repeat that many times |
+| 7. Nether Fortress 🎲 | 67–72 | **Master challenges** | Everything combined |
 
-Every world starts gently and gets harder. 🎲 marks the **dynamic levels** (34 of
-the 66). Their layout changes every time you press RUN, so a memorized path
+Every world starts gently and gets harder. 🎲 marks the **dynamic levels** (37 of
+the 72). Their layout changes every time you press RUN, so a memorized path
 won't work. The program has to look at the world and decide what to do, just
 like real software.
 
@@ -61,6 +61,8 @@ like real software.
   it failed.
 - **"Show Rust code"** turns the kid's block program into real Rust code, with
   colors like a code editor. This is the bridge from blocks to typing code.
+- **Boss levels.** Each world with a World Check ends with a BOSS level, marked
+  with a red banner: one bigger challenge that uses everything the world taught.
 - **World Checks.** At the end of each world, a 10-question check asks kids to
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each
@@ -165,7 +167,7 @@ resized and the game scales to fit.
 
 | Path | What's there |
 |---|---|
-| `src/levels.rs` | All 66 levels as small text maps, with hints and lessons |
+| `src/levels.rs` | All 72 levels as small text maps, with hints and lessons |
 | `src/world.rs` | The game rules: tiles, the miner, what each action does |
 | `src/program.rs` | Code blocks, a tiny compiler, and the virtual machine that runs them |
 | `src/editor.rs` | The block editor |
