@@ -65,7 +65,9 @@ like real software.
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each
   check asks at most 2 of the hardest "which program works every time?"
-  questions. The Nether Fortress opens once all six checks are passed.
+  questions. The Nether Fortress opens once all six checks are passed. Kids
+  who already know a world's idea can take its check straight away to skip
+  ahead.
 - **A variable you can watch.** In the Counting Caverns, the `count` variable
   is drawn as a box under the world. It lights up and shows its new number
   every time a block changes it, so kids can see a value change as the program

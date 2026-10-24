@@ -170,6 +170,8 @@ pub struct CheckScreen {
     phase: Phase,
     shirt: usize,
     passed_before: bool,
+    /// Taken before finishing the world's levels, to skip ahead.
+    early: bool,
     rng: Rng,
     /// On phones, which program (by its place in the shown order) is on screen.
     shown: usize,
@@ -205,6 +207,7 @@ impl CheckScreen {
             phase: Phase::Intro,
             shirt,
             passed_before: progress.checks[chapter],
+            early: !progress.checks[chapter] && !progress.finished_world(chapter),
             rng: Rng::new(fresh_seed()),
             shown: 0,
         };
@@ -317,6 +320,11 @@ impl CheckScreen {
         );
         if self.passed_before {
             body = format!("You've already passed this check, so this is just for practice.\n\n{body}");
+        } else if self.early {
+            // Wording picked with TypeSafe (see docs/DESIGN.md).
+            body = format!(
+                "You haven't finished this world's levels yet, and that's OK! If you already know {concept}, pass this check to skip ahead.\n\n{body}"
+            );
         }
         let box_r = Rect::new(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0);
         draw_rectangle(box_r.x, box_r.y, box_r.w, box_r.h, rgb8(60, 60, 72));
@@ -564,6 +572,10 @@ impl CheckScreen {
                     missing.join(", ")
                 )
             }
+        } else if self.early {
+            format!(
+                "You need {PASS} right to pass. No problem: the levels in this world teach everything on the check. Try them, then come back!"
+            )
         } else {
             format!(
                 "You need {PASS} right to pass. Read Bit's explanations, maybe replay a few levels, then try again. You'll get some new questions."

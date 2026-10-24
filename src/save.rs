@@ -426,10 +426,12 @@ impl Progress {
 
     /// Everything up to (and one past) the furthest level beaten is open, as
     /// long as its world is open. So new levels added before a player's
-    /// furthest level never lock them out.
+    /// furthest level never lock them out. A world's first level opens with
+    /// the world, so passing a World Check early opens the next world.
     pub fn unlocked(&self, i: usize) -> bool {
         let furthest = self.stars.iter().rposition(|&s| s > 0);
-        let reached = i == 0 || furthest.is_some_and(|f| i <= f + 1);
+        let first_of_world = i == 0 || LEVELS[i - 1].chapter != LEVELS[i].chapter;
+        let reached = first_of_world || furthest.is_some_and(|f| i <= f + 1);
         self.unlock_all || (reached && self.world_open(LEVELS[i].chapter))
     }
 
@@ -453,11 +455,18 @@ impl Progress {
         }
     }
 
-    /// Can the player take World Check `c`? Once they've beaten the world's
-    /// last level (or got past the world some other way).
+    /// Can the player take World Check `c`? As soon as its world is open, so
+    /// a player who already knows the idea can skip ahead.
     pub fn check_open(&self, c: usize) -> bool {
+        self.world_open(c)
+    }
+
+    /// Has the player got to the end of world `c`: beaten its last level (or
+    /// got past the world some other way)? Its World Check before then is
+    /// taken early.
+    pub fn finished_world(&self, c: usize) -> bool {
         let last = LEVELS.iter().rposition(|l| l.chapter == c);
-        self.unlock_all || last.is_some_and(|i| self.stars[i] > 0) || self.reached_world(c + 1)
+        last.is_some_and(|i| self.stars[i] > 0) || self.reached_world(c + 1)
     }
 
     pub fn total_stars(&self) -> u32 {

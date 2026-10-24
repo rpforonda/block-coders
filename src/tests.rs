@@ -785,6 +785,32 @@ mod world_checks {
         assert!(parent.unlocked(first_of(master)) && parent.check_open(CHECKS - 1));
     }
 
+    /// A player who already knows a world's idea can take its check as soon
+    /// as the world opens. Passing opens the next world's first level; the
+    /// levels they skipped open the usual way, once a later level is beaten.
+    #[test]
+    fn a_check_can_be_taken_early() {
+        let mut p = Progress::new(None);
+        assert!(p.check_open(0) && !p.finished_world(0), "world 1's check is open from the start");
+        assert!(!p.check_open(1), "but not world 2's");
+        p.checks[0] = true;
+        assert!(p.unlocked(first_of(1)), "passing opens world 2's first level");
+        assert!(p.check_open(1), "and world 2's check, which can be taken early too");
+        assert!(!p.unlocked(first_of(1) + 1) && !p.unlocked(last_of(0)), "skipped levels stay locked...");
+        p.stars[first_of(1)] = 1;
+        assert!(p.unlocked(first_of(1) + 1) && p.unlocked(last_of(0)), "...until a later level is beaten");
+        assert!(p.finished_world(0) && !p.finished_world(1));
+
+        // Passing every check early opens the last world's first level.
+        let master = CHAPTERS.len() - 1;
+        let mut all = Progress::new(None);
+        all.checks.iter_mut().for_each(|c| *c = true);
+        for c in 0..CHAPTERS.len() {
+            assert!(all.unlocked(first_of(c)), "world {} should be open", c + 1);
+        }
+        assert!(!all.unlocked(first_of(master) + 1));
+    }
+
     #[test]
     fn check_results_are_saved() {
         let _guard = super::SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
