@@ -65,7 +65,9 @@ like real software.
   stages. Kids break the boss's glowing crystals using the world's idea, and
   each cleared stage knocks a third off its health bar. The miner has 5 hearts:
   a run where it gets hurt costs half a heart, and testing a program that just
-  stops early is free.
+  stops early is free. Armor from the Wardrobe protects: rarer armor blocks
+  more mistakes, gives hearts back between stages, and the rarest makes lava
+  harmless.
 - **World Checks.** At the end of each world, a 10-question check asks kids to
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each

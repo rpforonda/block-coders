@@ -337,9 +337,31 @@ solution), in an arena around the boss.
   the level ends the fight, and the next visit starts it again.
 - **Stars** come from the hearts lost in the whole fight: 3 for at most 1
   heart, 2 for at most half of them, otherwise 1.
+- **Armor.** The armor worn in the [Wardrobe](#the-wardrobe) protects in boss
+  fights (`items::protection`). Each armor point blocks one mistake before any
+  hearts are lost ("Armor saved you!"), shown as chestplates above the hearts.
+  Rarer armor gives hearts back after each cleared stage, and the rarest makes
+  lava (and then water) harmless ("Lava can't hurt you!"). Armor is repaired
+  after each fight; points used before a knockout stay used. Mistakes the armor
+  blocked don't cost stars. A fight's intro says what the worn armor does, or
+  tips that stars unlock armor, and the Wardrobe says what each armor does.
+
+| Armor | Stars | Armor points | Hearts back after each stage | Harmless |
+|---|---|---|---|---|
+| Leather | 10 | 1 | | |
+| Chainmail | 20 | 2 | | |
+| Iron | 40 | 2 | half | |
+| Gold | 60 | 3 | half | |
+| Diamond | 110 | 3 | 1 | |
+| Netherite | 150 | 4 | 1 | lava |
+| Superstar | 216 | 4 | 1 | lava, water |
+
+  Even the best armor blocks only 4 mistakes and gives back 2 hearts over a
+  fight, so the miner can still be knocked out (a test checks the ladder never
+  goes past that, and that rarer armor never protects less).
 - `fight.rs` holds these rules (`Fight`) and draws nothing, so tests can play
   whole fights. `play.rs` draws the boss over its squares, the health bar
-  across the top of the world, and the hearts along the bottom.
+  across the top of the world, and the hearts (and armor) along the bottom.
 
 | World | Boss | Stage 1 | Stage 2 | Stage 3 |
 |---|---|---|---|---|
@@ -673,7 +695,8 @@ user-<id>.txt    gen;<n>                 how many times this player started over
 ### The Wardrobe
 
 Stars unlock shirts, armor and tools for the miner (`items.rs`). Kids open it
-from the level select by clicking their own miner and name.
+from the level select by clicking their own miner and name. Armor also
+protects in boss fights (see [Boss fights](#boss-fights)).
 
 - **Stars are never spent.** An item unlocks once the player's total reaches
   its number, so the star count still says how well they code, and nothing
@@ -750,6 +773,10 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `boss_fights::knocked_out_retries_the_same_stage_with_full_hearts` | At zero hearts: full hearts, the same stage, cleared stages kept |
 | `boss_fights::each_stage_takes_a_third_and_stars_follow_hearts_lost` | Boss health in thirds, and the star thresholds |
 | `boss_fights::every_boss_can_be_defeated` | Playing each stage's solution in order defeats every boss |
+| `boss_fights::armor_blocks_mistakes_before_hearts` | Armor points block mistakes before hearts, hearts come back after a stage (never above full), and blocked mistakes don't cost stars |
+| `boss_fights::the_rarest_armor_makes_lava_and_water_harmless` | Netherite makes lava harmless (not water); Superstar makes both harmless |
+| `boss_fights::used_armor_stays_used_after_a_knockout` | A knockout refills hearts, not armor |
+| `boss_fights::rarer_armor_protects_more_but_never_too_much` | Rarer armor never protects less, never more than 4 points or a heart back per stage, and shirts and tools don't protect |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
@@ -816,6 +843,7 @@ screenshots don't show real players' names.
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
 | Boss fights in 3 stages: break the boss's crystals using the world's idea; each stage takes a third of its health | One big puzzle level per world; a boss creature with new rules and attacks | The owner asked for combat in 3 stages that each take a third of the boss's health, and a Minecraft-like heart meter. TypeSafe chose reworking #24 into fights, with armor in a second PR (0.80); half a heart for a run where the miner gets hurt, but nothing for a program that just stops early (0.96); 5 hearts (0.69, against 0.27 for 3 and 0.05 for 10); retrying the current stage at zero hearts (0.74); stars from hearts lost (0.83); and the bosses Mossback, Echo Bat, Thornroot, Dune Scorpion, The Gloom and Abacus Golem (0.64). Before that: a red banner on the tile (0.69), and opening a world's first level with its world so bosses never lock out old saves (0.79). Wording: "Oof! You ran out of hearts..." (0.47), "Ouch!" (0.49), and "... lost a third of its health. 2 more stages to go!" (0.53). |
+| The Wardrobe's armor protects in boss fights, more as it gets rarer | Armor crafted from diamonds and emeralds (4 pieces x 4 tiers); crafted armor beside the Wardrobe's; asking first | The owner asked for hearts tied to worn armor that adds durability, with rarer armor giving more. Crafting was chosen first (0.53), before the Wardrobe (#25) existed; with it, TypeSafe chose making its armor protect (0.54, against 0.42 for asking and 0.05 for two armor systems). Armor points that block mistakes, repaired after each fight (0.81); points used before a knockout stay used (0.68); the ladder in Boss fights (0.69); "Armor saved you!" (0.39) and "Lava can't hurt you!" (0.42); and the intro saying what the worn armor does (0.97). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |

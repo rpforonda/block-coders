@@ -98,6 +98,18 @@ pub const HEART: [&str; 8] = [
     "....k....",
 ];
 
+/// A chestplate for the armor bar in boss fights: one per armor point.
+pub const ARMOR_ICON: [&str; 8] = [
+    "kkk...kkk",
+    "kWGkkkGGk",
+    "kGGGGGGGk",
+    ".kGGGGGk.",
+    ".kGGGGGk.",
+    ".kGGGGGk.",
+    ".kGGGGGk.",
+    ".kkkkkkk.",
+];
+
 /// Pixel art for a sprite, and the colour of each letter in it.
 pub type PixelArt = ([&'static str; 16], &'static [(char, (u8, u8, u8))]);
 
@@ -398,6 +410,8 @@ pub struct Art {
     bosses: Vec<Texture2D>,
     pub heart_full: Texture2D,
     pub heart_empty: Texture2D,
+    pub armor_full: Texture2D,
+    pub armor_empty: Texture2D,
     portal: Vec<Texture2D>,
     portal_off: Texture2D,
     player: Vec<[Texture2D; 4]>,
@@ -574,6 +588,8 @@ impl Art {
                 .collect(),
             heart_full: sprite(&HEART, &[('k', rgb(40, 10, 10)), ('R', rgb(220, 30, 40)), ('W', WHITE)]),
             heart_empty: sprite(&HEART, &[('k', rgb(40, 10, 10)), ('R', rgb(70, 60, 60)), ('W', rgb(100, 90, 90))]),
+            armor_full: sprite(&ARMOR_ICON, &[('k', rgb(30, 30, 36)), ('G', rgb(205, 210, 220)), ('W', WHITE)]),
+            armor_empty: sprite(&ARMOR_ICON, &[('k', rgb(30, 30, 36)), ('G', rgb(70, 70, 80)), ('W', rgb(95, 95, 105))]),
             portal,
             portal_off: tex(|x, y| {
                 if x < 2 || x > 13 || y < 2 || y > 13 {

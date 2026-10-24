@@ -68,8 +68,19 @@ fn wearing(look: &Look, slot: Slot) -> Card {
     }
 }
 
-/// What the line under the grid says about `card`.
+/// What the line under the grid says about `card`. Armor also says what it
+/// does in boss fights.
 fn describe(card: Card, look: &Look, stars: u32) -> String {
+    let said = describe_look(card, look, stars);
+    match card {
+        Card::Item(i) if ITEMS[i].slot == Slot::Armor => {
+            format!("{said} In boss fights it {}", items::protection(ITEMS[i].key).describe())
+        }
+        _ => said,
+    }
+}
+
+fn describe_look(card: Card, look: &Look, stars: u32) -> String {
     let name = card.name();
     if card.stars() > stars {
         let more = card.stars() - stars;

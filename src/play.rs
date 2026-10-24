@@ -3,9 +3,9 @@
 use crate::art::{draw_tex, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
-use crate::fight::{Fight, Hurt, MAX_HEARTS, STAGES};
+use crate::fight::{Cause, Fight, Hurt, MAX_HEARTS, STAGES};
 use crate::hints::{self, Hint};
-use crate::items::{self, Look, ITEMS};
+use crate::items::{self, Look, Slot, ITEMS};
 
 /// How many changes Undo can go back.
 const HISTORY: usize = 100;
@@ -167,6 +167,8 @@ pub struct Play {
     boss_flash: f32,
     /// The boss's health bar as drawn, sliding down to the real value.
     boss_bar: f32,
+    /// Shakes the armor icons after they block a mistake.
+    armor_flash: f32,
 }
 
 /// Where palette block `i` is drawn in the palette's `list` when it isn't scrolled.
@@ -204,7 +206,7 @@ fn ease(t: f32) -> f32 {
 
 impl Play {
     pub fn new(idx: usize, saved: Option<Program>, speed: usize, look: Look) -> Play {
-        let fight = LEVELS[idx].boss.map(Fight::new);
+        let fight = LEVELS[idx].boss.map(|b| Fight::new(b, look.protection()));
         let level = fight.as_ref().map_or(&LEVELS[idx], |f| f.level());
         let program = saved.unwrap_or_default();
         // A first visit to level 1 gets the guided tour instead of the intro.
@@ -254,6 +256,7 @@ impl Play {
             heart_flash: 0.0,
             boss_flash: 0.0,
             boss_bar: STAGES as f32,
+            armor_flash: 0.0,
         };
         p.reset_run();
         p
@@ -293,19 +296,28 @@ impl Play {
         }
     }
 
-    /// In a boss fight, a run where the miner gets hurt costs half a heart.
-    fn hurt(&mut self, sfx: &Sounds) {
+    /// In a boss fight, a run where the miner gets hurt costs half a heart,
+    /// unless the armor blocks it or makes it harmless.
+    fn hurt(&mut self, sfx: &Sounds, cause: Cause) {
         let Some(f) = self.fight.as_mut() else { return };
-        let out = f.hurt();
-        if out == Hurt::Already {
-            return;
-        }
-        self.heart_flash = 1.0;
+        let out = f.hurt(cause);
         // Wording picked with TypeSafe (see docs/DESIGN.md).
+        let (text, color) = match out {
+            Hurt::Already => return,
+            Hurt::Immune if cause == Cause::Water => ("Water can't hurt you!", rgb8(140, 200, 255)),
+            Hurt::Immune => ("Lava can't hurt you!", rgb8(255, 170, 80)),
+            Hurt::Blocked => ("Armor saved you!", rgb8(220, 225, 235)),
+            Hurt::Heart | Hurt::KnockedOut => ("Ouch!", rgb8(255, 110, 110)),
+        };
+        match out {
+            Hurt::Blocked => self.armor_flash = 1.0,
+            Hurt::Heart | Hurt::KnockedOut => self.heart_flash = 1.0,
+            _ => {}
+        }
         self.floaters.push(Floater {
             pos: vec2(self.world.pos.0 as f32 + 0.5, self.world.pos.1 as f32 + 0.1),
-            text: "Ouch!".into(),
-            color: rgb8(255, 110, 110),
+            text: text.into(),
+            color,
             life: 1.2,
         });
         if out == Hurt::KnockedOut {
@@ -335,7 +347,7 @@ impl Play {
     /// Fights the boss again from the start.
     fn restart_fight(&mut self) {
         let Some(boss) = LEVELS[self.idx].boss else { return };
-        self.fight = Some(Fight::new(boss));
+        self.fight = Some(Fight::new(boss, self.look.protection()));
         self.boss_bar = STAGES as f32;
         self.next_stage();
     }
@@ -444,14 +456,14 @@ impl Play {
         true
     }
 
-    fn fail(&mut self, msg: String, id: Option<u32>, sfx: &Sounds) {
+    fn fail(&mut self, msg: String, id: Option<u32>, sfx: &Sounds, cause: Cause) {
         self.state = RunState::Done;
         self.error_id = id;
         self.running_id = None;
         self.say(format!("{msg}  (The block with the red outline is where it went wrong. Press RESET and try again!)"), MsgKind::Error);
         self.shake = 0.35;
         sfx.play(Sfx::Fail);
-        self.hurt(sfx);
+        self.hurt(sfx, cause);
     }
 
     fn step_once(&mut self, sfx: &Sounds) {
@@ -508,7 +520,7 @@ impl Play {
                         self.state = RunState::Done;
                         self.win_timer = Some(dur + 0.4);
                     }
-                    Outcome::Fail(f) => self.fail(f.message(), Some(id), sfx),
+                    Outcome::Fail(f) => self.fail(f.message(), Some(id), sfx, cause_of(f)),
                 }
                 let _ = failed;
             }
@@ -537,7 +549,7 @@ impl Play {
                 self.say(m, MsgKind::Error);
                 sfx.play(Sfx::Fail);
             }
-            Step::Error(m, id) => self.fail(m, id, sfx),
+            Step::Error(m, id) => self.fail(m, id, sfx, Cause::Other),
         }
     }
 
@@ -547,7 +559,7 @@ impl Play {
             self.modal = Modal::OtherWorld(seed, e);
             sfx.play(Sfx::Fail);
             // A lucky win doesn't hurt the boss, and costs half a heart.
-            self.hurt(sfx);
+            self.hurt(sfx, Cause::Other);
             return;
         }
         if let Some(f) = self.fight.as_mut()
@@ -611,6 +623,7 @@ impl Play {
         self.count_flash = (self.count_flash - dt * 1.5).max(0.0);
         self.heart_flash = (self.heart_flash - dt * 1.5).max(0.0);
         self.boss_flash = (self.boss_flash - dt * 1.5).max(0.0);
+        self.armor_flash = (self.armor_flash - dt * 1.5).max(0.0);
         if let Some(f) = &self.fight {
             // The boss's health bar slides down after a stage.
             self.boss_bar += (f.boss_health() as f32 - self.boss_bar) * (dt * 3.0).min(1.0);
@@ -1126,6 +1139,17 @@ impl Play {
         let shake = (get_time() * 50.0).sin() as f32 * 3.0 * self.heart_flash;
         let y = area.y + area.h - hh - 10.0;
         let x0 = area.x + 12.0;
+        // Armor points above the hearts, like Minecraft's armor bar.
+        let points = usize::from(f.protection.points);
+        if points > 0 {
+            let ay = y - hh - 12.0;
+            let wobble = (get_time() * 50.0).sin() as f32 * 3.0 * self.armor_flash;
+            draw_rectangle(x0 - 6.0, ay - 5.0, points as f32 * (hw + 4.0) + 8.0, hh + 10.0, Color::new(0.0, 0.0, 0.0, 0.5));
+            for i in 0..points {
+                let icon = if i < usize::from(f.armor) { &art.armor_full } else { &art.armor_empty };
+                draw_tex(icon, x0 + i as f32 * (hw + 4.0) + wobble, ay, hw, hh, WHITE);
+            }
+        }
         draw_rectangle(x0 - 6.0, y - 5.0, hearts as f32 * (hw + 4.0) + 8.0, hh + 10.0, Color::new(0.0, 0.0, 0.0, 0.5));
         for i in 0..hearts {
             let x = x0 + i as f32 * (hw + 4.0) + shake;
@@ -1411,8 +1435,19 @@ impl Play {
                 draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 80.0, 80.0, WHITE);
                 let size = fit_size(title, r.w - 144.0, 32.0, 22.0);
                 text(title, r.x + 124.0, r.y + 44.0, size, TITLE_ON_LIGHT);
-                draw_rectangle(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0, rgb8(60, 60, 72));
-                paragraph(body, r.x + 36.0, r.y + 134.0, r.w - 72.0, 21.0, WHITE);
+                // A boss fight's intro also says what the armor does.
+                let body = match &self.fight {
+                    Some(f) if f.stage == 0 => format!("{body}\n\n{}", armor_line(&self.look)),
+                    _ => body.to_string(),
+                };
+                let box_r = Rect::new(r.x + 20.0, r.y + 118.0, r.w - 40.0, r.h - 200.0);
+                draw_rectangle(box_r.x, box_r.y, box_r.w, box_r.h, rgb8(60, 60, 72));
+                // Long text steps down a little to fit, never below 16px.
+                let size = [21.0, 19.0, 17.5, 16.0]
+                    .into_iter()
+                    .find(|&s| wrap(&body, r.w - 72.0, s).len() as f32 * s * 1.3 <= box_r.h - 24.0)
+                    .unwrap_or(16.0);
+                paragraph(&body, r.x + 36.0, r.y + 134.0, r.w - 72.0, size, WHITE);
                 // Narrow popups put "Let's go!" on the right, clear of "Show me around".
                 let go = if narrow {
                     Rect::new(r.x + r.w - 204.0, r.y + r.h - 66.0, 180.0, 48.0)
@@ -1682,6 +1717,25 @@ impl Play {
                 out
             }
         }
+    }
+}
+
+/// What a failure did to the miner, for armor that makes some harmless.
+fn cause_of(f: Failure) -> Cause {
+    match f {
+        Failure::Hazard(Tile::Lava) => Cause::Lava,
+        Failure::Hazard(Tile::Water) => Cause::Water,
+        _ => Cause::Other,
+    }
+}
+
+/// What the worn armor does in a boss fight, for its intro. Wording picked
+/// with TypeSafe (see docs/DESIGN.md).
+fn armor_line(look: &Look) -> String {
+    match look.outfit.get(Slot::Armor) {
+        Some(i) => format!("Your {} {}", ITEMS[i].name, look.protection().describe()),
+        None => "Tip: stars unlock armor in the Wardrobe (click your miner on the level screen), and armor blocks mistakes in boss fights!"
+            .to_string(),
     }
 }
 

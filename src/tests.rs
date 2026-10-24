@@ -1925,13 +1925,18 @@ mod menu_layouts {
 }
 
 mod boss_fights {
-    use crate::fight::{Fight, Hurt, MAX_HEARTS};
-    use crate::levels::LEVELS;
+    use crate::fight::{Cause, Fight, Hurt, MAX_HEARTS};
+    use crate::items::{protection, Look, Protection, Slot, ITEMS};
+    use crate::levels::{Boss, LEVELS};
     use crate::program::{simulate, Program};
     use crate::world::World;
 
+    fn first_boss() -> &'static Boss {
+        LEVELS.iter().find_map(|l| l.boss).unwrap()
+    }
+
     fn mossback() -> Fight {
-        Fight::new(LEVELS.iter().find_map(|l| l.boss).unwrap())
+        Fight::new(first_boss(), Protection::default())
     }
 
     #[test]
@@ -1939,8 +1944,8 @@ mod boss_fights {
         let mut f = mossback();
         assert_eq!(f.hearts, MAX_HEARTS);
         f.start_run();
-        assert_eq!(f.hurt(), Hurt::Heart);
-        assert_eq!(f.hurt(), Hurt::Already);
+        assert_eq!(f.hurt(Cause::Other), Hurt::Heart);
+        assert_eq!(f.hurt(Cause::Other), Hurt::Already);
         assert_eq!(f.hearts, MAX_HEARTS - 1);
     }
 
@@ -1950,10 +1955,10 @@ mod boss_fights {
         f.clear_stage();
         for i in 1..MAX_HEARTS {
             f.start_run();
-            assert_eq!(f.hurt(), Hurt::Heart, "mistake {i}");
+            assert_eq!(f.hurt(Cause::Other), Hurt::Heart, "mistake {i}");
         }
         f.start_run();
-        assert_eq!(f.hurt(), Hurt::KnockedOut);
+        assert_eq!(f.hurt(Cause::Other), Hurt::KnockedOut);
         f.get_up();
         assert_eq!((f.stage, f.hearts, f.lost), (1, MAX_HEARTS, u32::from(MAX_HEARTS)));
     }
@@ -1971,11 +1976,80 @@ mod boss_fights {
         }
     }
 
+    #[test]
+    fn armor_blocks_mistakes_before_hearts() {
+        // Iron: 2 armor points, and half a heart back after each stage.
+        let mut f = Fight::new(first_boss(), protection("iron"));
+        for _ in 0..2 {
+            f.start_run();
+            assert_eq!(f.hurt(Cause::Other), Hurt::Blocked);
+        }
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Other), Hurt::Heart);
+        assert_eq!((f.armor, f.hearts, f.lost), (0, MAX_HEARTS - 1, 1));
+        // Clearing a stage gives half a heart back, never above full.
+        f.clear_stage();
+        assert_eq!(f.hearts, MAX_HEARTS);
+        f.clear_stage();
+        assert_eq!(f.hearts, MAX_HEARTS);
+        // Blocked mistakes don't cost stars.
+        assert_eq!(f.stars(), 3);
+    }
+
+    #[test]
+    fn the_rarest_armor_makes_lava_and_water_harmless() {
+        let mut f = Fight::new(first_boss(), protection("netherite"));
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Lava), Hurt::Immune);
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Water), Hurt::Blocked, "netherite doesn't stop water");
+        let mut g = Fight::new(first_boss(), protection("superstar"));
+        g.start_run();
+        assert_eq!(g.hurt(Cause::Water), Hurt::Immune);
+        assert_eq!((g.armor, g.hearts), (4, MAX_HEARTS));
+    }
+
+    #[test]
+    fn used_armor_stays_used_after_a_knockout() {
+        let mut f = Fight::new(first_boss(), protection("leather"));
+        for _ in 0..=MAX_HEARTS {
+            f.start_run();
+            f.hurt(Cause::Other);
+        }
+        assert_eq!(f.hearts, 0, "1 blocked, then every half heart");
+        f.get_up();
+        assert_eq!((f.hearts, f.armor), (MAX_HEARTS, 0));
+    }
+
+    /// Rarer armor never protects less, and even the best can't come close to
+    /// making the miner invulnerable. Shirts and tools don't protect.
+    #[test]
+    fn rarer_armor_protects_more_but_never_too_much() {
+        let mut armor: Vec<_> = ITEMS.iter().filter(|i| i.slot == Slot::Armor).collect();
+        armor.sort_by_key(|i| i.stars);
+        let mut last = Protection::default();
+        for item in armor {
+            let p = protection(item.key);
+            assert!(p.points >= 1, "{}: armor should protect", item.name);
+            assert!(p.points >= last.points && p.heal >= last.heal, "{}: protects less than the armor before it", item.name);
+            assert!(p.points <= 4 && p.heal <= 2, "{}: too strong", item.name);
+            last = p;
+        }
+        for item in ITEMS.iter().filter(|i| i.slot != Slot::Armor) {
+            assert_eq!(protection(item.key), Protection::default(), "{}", item.name);
+        }
+        // Only worn armor counts.
+        let mut look = Look::plain(0);
+        assert_eq!(look.protection(), Protection::default());
+        look.outfit.wear(ITEMS.iter().position(|i| i.key == "iron").unwrap());
+        assert_eq!(look.protection(), protection("iron"));
+    }
+
     /// Every boss can be beaten by playing its stages' solutions in order.
     #[test]
     fn every_boss_can_be_defeated() {
         for boss in LEVELS.iter().filter_map(|l| l.boss) {
-            let mut f = Fight::new(boss);
+            let mut f = Fight::new(boss, Protection::default());
             while !f.defeated() {
                 let l = f.level();
                 let p = Program::deserialize(l.solution).unwrap();

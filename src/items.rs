@@ -170,3 +170,62 @@ impl Look {
         SLOTS.iter().filter_map(|&s| self.outfit.get(s)).filter(|&i| i >= CLASSIC)
     }
 }
+
+/// What armor does in boss fights (see `fight.rs`). Rarer armor protects
+/// more, but even the best blocks only a few mistakes, so the miner can still
+/// be knocked out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Protection {
+    /// Mistakes it blocks per fight before any hearts are lost.
+    pub points: u8,
+    /// Half-hearts back after each cleared stage.
+    pub heal: u8,
+    /// Lava costs no hearts.
+    pub lava: bool,
+    /// Water costs no hearts.
+    pub water: bool,
+}
+
+/// The protection of the armor item with `key` (nothing for shirts and tools).
+/// The ladder was picked with TypeSafe (see docs/DESIGN.md).
+pub fn protection(key: &str) -> Protection {
+    let p = |points, heal, lava, water| Protection { points, heal, lava, water };
+    match key {
+        "leather" => p(1, 0, false, false),
+        "chainmail" => p(2, 0, false, false),
+        "iron" => p(2, 1, false, false),
+        "gold" => p(3, 1, false, false),
+        "diamond" => p(3, 2, false, false),
+        "netherite" => p(4, 2, true, false),
+        "superstar" => p(4, 2, true, true),
+        _ => Protection::default(),
+    }
+}
+
+impl Protection {
+    /// What it does, in words: "blocks 2 mistakes and gives half a heart back
+    /// after each stage."
+    pub fn describe(&self) -> String {
+        let mut s = format!("blocks {} mistake{}", self.points, if self.points == 1 { "" } else { "s" });
+        match self.heal {
+            0 => {}
+            1 => s.push_str(" and gives half a heart back after each stage"),
+            _ => s.push_str(" and gives a heart back after each stage"),
+        }
+        s.push('.');
+        match (self.lava, self.water) {
+            (true, true) => s.push_str(" Lava and water can't hurt you."),
+            (true, false) => s.push_str(" Lava can't hurt you."),
+            (false, true) => s.push_str(" Water can't hurt you."),
+            (false, false) => {}
+        }
+        s
+    }
+}
+
+impl Look {
+    /// What the worn armor does in boss fights.
+    pub fn protection(&self) -> Protection {
+        self.outfit.get(Slot::Armor).map_or(Protection::default(), |i| protection(ITEMS[i].key))
+    }
+}
