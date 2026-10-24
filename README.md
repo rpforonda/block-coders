@@ -45,8 +45,10 @@ like real software.
   and the program doesn't just get lucky because the game stops at the portal.
   If no single change is enough, Bit explains what went wrong and which way
   the goal is. A program that already works gets help with blocks that never
-  run, loops that go round too often, and patterns a loop could shorten. It
-  all runs on the device, with no network and no AI service.
+  run, loops that go round too often, patterns a loop could shorten, and a
+  block that ends both parts of an IF / ELSE (it happens either way, so it can
+  go once, after it). It all runs on the device, with no network and no AI
+  service.
 - **Drag and drop, with undo.** Drag blocks from the palette or rearrange the
   program by dragging. Every change can be undone and redone.
 - **Step-by-step debugging.** *STEP* runs one block at a time, and the running

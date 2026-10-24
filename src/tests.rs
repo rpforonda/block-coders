@@ -979,6 +979,43 @@ mod smart_hints {
     }
 
     #[test]
+    fn a_block_at_the_end_of_both_parts_of_an_if_else() {
+        // A player's 12-block "Both Sides" (3 stars at 11): each IF / ELSE
+        // turns back the same way in both parts.
+        let (p, h) = hints("Both Sides", "[R8 F L [E4 M R | R ] R [E4 M L | L ] ]");
+        assert!(h[0].text.contains("you're using 12") && h[0].text.contains("BOTH parts"), "{h:?}");
+        assert_eq!(
+            h[1].text,
+            "The TOP part and the BOTTOM part of the outlined IF / ELSE both end with TURN RIGHT. So TURN RIGHT happens either way!"
+        );
+        assert_eq!(
+            h[2].text,
+            "Take TURN RIGHT out of both parts, and put it once right AFTER the outlined IF / ELSE - below it, not inside it. \
+             That saves 1 block!"
+        );
+        assert_eq!(h[2].block, Some(p.main[0].body[2].id));
+        // It comes before "Check your REPEAT numbers", which would make it 13.
+        let (_, h) = hints("Both Sides", "[R7 F L [E4 M R | R ] R [E4 M L | L ] ] F");
+        assert!(h[0].text.contains("BOTH parts"), "{h:?}");
+        // Taking both turns out does the same with 10 blocks: 3 stars, so Bit
+        // moves on to ending right at the goal.
+        let l = level("Both Sides");
+        let fixed = Program::deserialize("[R8 F L [E4 M | ] R R [E4 M | ] L ]").unwrap();
+        assert!((0..300).all(|s| simulate(&fixed, World::from_level(l, s)).is_ok()));
+        assert!(fixed.block_count() <= l.par);
+        let (_, h) = hints("Both Sides", "[R8 F L [E4 M | ] R R [E4 M | ] L ]");
+        assert!(h[0].text.contains("only because the game stops it"), "{h:?}");
+        // A bigger doubled block saves all of its blocks (13 is this level's limit).
+        let (p, h) = hints("Both Sides", "[R8 F L [E4 M [R3 L ] | [R3 L ] ] R [I4 M ] L ]");
+        assert!(h[1].text.ends_with("both end with REPEAT 3 TIMES. So REPEAT 3 TIMES happens either way!"), "{h:?}");
+        assert!(h[2].text.ends_with("That saves 2 blocks!"), "{h:?}");
+        assert_eq!(h[2].block, Some(p.main[0].body[2].id));
+        // Already at 3 stars (the same player's "Diamond Detector"): no nagging.
+        let (_, h) = hints("Diamond Detector", "[R8 F L [E4 M R | R ] ]");
+        assert!(h.iter().all(|x| !x.text.contains("BOTH parts")), "{h:?}");
+    }
+
+    #[test]
     fn checks_are_never_changed_to_repeat_an_outer_check() {
         // The empty "IF path ahead" sits in the ELSE of "IF path to right", so
         // changing it to check "path to right" would make it always false.
