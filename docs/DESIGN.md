@@ -439,8 +439,9 @@ rectangles (a test checks them).
   about 14pt rather than 15. Screens under 360 points wide (older than today's
   phones) are best effort: everything fits, but panels are cramped.
 - Text that might not fit steps down a little, never below 16px: titles,
-  palette labels, Bit's long messages, and the Rust view (down to 11px, so the
-  widest line fits), and RUN AGAIN (down to 20px). The info bar shortens its
+  palette labels, Bit's long messages, the level screen's bottom line, and the
+  Rust view (down to 11px, so the widest line fits), and RUN AGAIN (down to
+  20px). The info bar shortens its
   labels when narrow, and popups shrink to the canvas and stack their buttons
   when narrow. Where any speed's label is too wide for the Speed button, every
   speed goes on a second line under "Speed:", so the label keeps its shape as
