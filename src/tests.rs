@@ -535,7 +535,7 @@ fn tampered_player_list_is_cleaned_on_load() {
 // ------------------------------ World Checks ------------------------------
 
 mod world_checks {
-    use crate::check::{changes, pick, run, world_for, Run, ASKED, CHECKS, MAX_CHANGING, PASS};
+    use crate::check::{changes, choice_order, pick, run, world_for, Run, ASKED, CHECKS, MAX_CHANGING, PASS};
     use crate::levels::{CHAPTERS, LEVELS};
     use crate::program::Program;
     use crate::questions::{Choices, End, Proof, Question, BANKS};
@@ -713,6 +713,41 @@ mod world_checks {
                 }
                 last = qs.iter().map(|q| q.id.to_string()).collect();
             }
+        }
+    }
+
+    /// The right answer (choice 0) is shown in every place about equally
+    /// often, and every order turns up. Both when each attempt starts from its
+    /// own seed (the screen seeds from the clock, so seeds can be close
+    /// together) and when one generator keeps going (question after question).
+    #[test]
+    fn choices_are_shown_in_a_random_order() {
+        const TRIES: usize = 6000;
+        let check = |n: usize, how: &str, orders: Vec<Vec<usize>>| {
+            let mut at = vec![0usize; n];
+            for o in &orders {
+                let mut sorted = o.clone();
+                sorted.sort();
+                assert_eq!(sorted, (0..n).collect::<Vec<_>>(), "{how}: {o:?} isn't an order of {n} choices");
+                at[o.iter().position(|&c| c == 0).unwrap()] += 1;
+            }
+            let fair = TRIES / n;
+            for (place, &times) in at.iter().enumerate() {
+                assert!(
+                    times.abs_diff(fair) < fair / 10,
+                    "{how}, {n} choices: the right answer was shown in place {} {times} times out of {TRIES}",
+                    place + 1
+                );
+            }
+            let mut kinds = orders;
+            kinds.sort();
+            kinds.dedup();
+            assert_eq!(kinds.len(), (1..=n).product::<usize>(), "{how}, {n} choices: some orders never come up");
+        };
+        for n in 2..=4 {
+            check(n, "a new seed each time", (0..TRIES as u64).map(|seed| choice_order(n, &mut Rng::new(seed))).collect());
+            let mut rng = Rng::new(7);
+            check(n, "one generator", (0..TRIES).map(|_| choice_order(n, &mut rng)).collect());
         }
     }
 
