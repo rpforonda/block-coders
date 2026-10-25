@@ -162,10 +162,11 @@ impl UsersScreen {
             Mode::List => None,
             Mode::New { name, shirt } => {
                 let push = |name: &mut String, c: char| {
-                    if (c.is_alphanumeric() || c == ' ' || c == '-' || c == '_') && name.chars().count() < MAX_NAME {
-                        if !(c == ' ' && name.is_empty()) {
-                            name.push(c);
-                        }
+                    if (c.is_alphanumeric() || c == ' ' || c == '-' || c == '_')
+                        && name.chars().count() < MAX_NAME
+                        && !(c == ' ' && name.is_empty())
+                    {
+                        name.push(c);
                     }
                 };
                 while let Some(c) = get_char_pressed() {

@@ -400,8 +400,8 @@ impl Play {
             }
             s.push_str("walk into the portal.");
         }
-        if self.level.max_blocks.is_some() {
-            s.push_str(&format!(" You can use up to {} blocks.", self.level.max_blocks.unwrap()));
+        if let Some(max) = self.level.max_blocks {
+            s.push_str(&format!(" You can use up to {max} blocks."));
         }
         if self.level.is_random() {
             s.push_str(" This world CHANGES each time - your code must work in every version! Try the dice button.");
@@ -781,10 +781,10 @@ impl Play {
             if is_key_pressed(KeyCode::Enter) {
                 self.press_run(sfx);
             }
-            if is_key_pressed(KeyCode::Backspace) || is_key_pressed(KeyCode::Delete) {
-                if self.editor.delete_before_cursor(&mut self.program) {
-                    self.program_changed(progress);
-                }
+            if (is_key_pressed(KeyCode::Backspace) || is_key_pressed(KeyCode::Delete))
+                && self.editor.delete_before_cursor(&mut self.program)
+            {
+                self.program_changed(progress);
             }
             let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
             let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
@@ -794,12 +794,12 @@ impl Play {
             if ctrl && is_key_pressed(KeyCode::Y) {
                 self.redo(progress, sfx);
             }
-            if ctrl && shift && is_key_pressed(KeyCode::S) {
-                if let Some(p) = Program::deserialize(self.level.solution) {
-                    self.program = p;
-                    self.program_changed(progress);
-                    self.say("Parent mode: loaded a working solution. Press RUN to watch it!", MsgKind::Success);
-                }
+            if ctrl && shift && is_key_pressed(KeyCode::S)
+                && let Some(p) = Program::deserialize(self.level.solution)
+            {
+                self.program = p;
+                self.program_changed(progress);
+                self.say("Parent mode: loaded a working solution. Press RUN to watch it!", MsgKind::Success);
             }
         } else if is_key_pressed(KeyCode::Escape) {
             // A boss popup can't just be closed: the fight has to move on.
@@ -1010,10 +1010,12 @@ impl Play {
                 let py = oy + y as f32 * ts;
                 draw_tex(art.floor(floor), px, py, ts, ts, WHITE);
                 let mut t = w.tile((x, y));
-                if let Some(a) = anim {
-                    if a.kind == AnimKind::Mine && a.target == (x, y) && !a.fired {
-                        t = a.old_tile;
-                    }
+                if let Some(a) = anim
+                    && a.kind == AnimKind::Mine
+                    && a.target == (x, y)
+                    && !a.fired
+                {
+                    t = a.old_tile;
                 }
                 if let Some(tex) = art.tile(t, floor, time, portal_on) {
                     let placing = anim.is_some_and(|a| a.kind == AnimKind::Place && a.target == (x, y) && ap < 1.0);
@@ -1044,21 +1046,22 @@ impl Play {
         }
 
         // Cracks on the block being mined.
-        if let Some(a) = anim {
-            if a.kind == AnimKind::Mine && !a.fired {
-                let (tx, ty) = (ox + a.target.0 as f32 * ts, oy + a.target.1 as f32 * ts);
-                let stage = (ap / 0.55 * 4.0) as i32;
-                let c = Color::new(0.0, 0.0, 0.0, 0.7);
-                let cracks = [
-                    (0.5, 0.5, 0.2, 0.25),
-                    (0.5, 0.5, 0.8, 0.35),
-                    (0.5, 0.5, 0.35, 0.85),
-                    (0.2, 0.25, 0.1, 0.6),
-                    (0.8, 0.35, 0.9, 0.8),
-                ];
-                for &(x0, y0, x1, y1) in cracks.iter().take(stage as usize + 1) {
-                    draw_line(tx + x0 * ts, ty + y0 * ts, tx + x1 * ts, ty + y1 * ts, (ts / 16.0).max(2.0), c);
-                }
+        if let Some(a) = anim
+            && a.kind == AnimKind::Mine
+            && !a.fired
+        {
+            let (tx, ty) = (ox + a.target.0 as f32 * ts, oy + a.target.1 as f32 * ts);
+            let stage = (ap / 0.55 * 4.0) as i32;
+            let c = Color::new(0.0, 0.0, 0.0, 0.7);
+            let cracks = [
+                (0.5, 0.5, 0.2, 0.25),
+                (0.5, 0.5, 0.8, 0.35),
+                (0.5, 0.5, 0.35, 0.85),
+                (0.2, 0.25, 0.1, 0.6),
+                (0.8, 0.35, 0.9, 0.8),
+            ];
+            for &(x0, y0, x1, y1) in cracks.iter().take(stage as usize + 1) {
+                draw_line(tx + x0 * ts, ty + y0 * ts, tx + x1 * ts, ty + y1 * ts, (ts / 16.0).max(2.0), c);
             }
         }
 
@@ -1761,13 +1764,12 @@ fn draw_code_line(line: &str, x: f32, y: f32, size: f32) {
     let mut i = 0;
     while i < chars.len() {
         let start = i;
-        let color;
-        if chars[i].is_alphanumeric() || chars[i] == '_' {
+        let color = if chars[i].is_alphanumeric() || chars[i] == '_' {
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            color = if ["fn", "for", "in", "if", "else", "while"].contains(&word.as_str()) {
+            if ["fn", "for", "in", "if", "else", "while"].contains(&word.as_str()) {
                 rgb8(200, 130, 255)
             } else if word.chars().all(|c| c.is_ascii_digit()) {
                 rgb8(255, 180, 90)
@@ -1775,11 +1777,11 @@ fn draw_code_line(line: &str, x: f32, y: f32, size: f32) {
                 rgb8(110, 200, 255)
             } else {
                 rgb8(230, 230, 230)
-            };
+            }
         } else {
             i += 1;
-            color = if chars[start] == '!' { rgb8(255, 120, 120) } else { rgb8(180, 180, 180) };
-        }
+            if chars[start] == '!' { rgb8(255, 120, 120) } else { rgb8(180, 180, 180) }
+        };
         let tok: String = chars[start..i].iter().collect();
         if !tok.trim().is_empty() {
             code_text(&tok, x + start as f32 * cw, y, size, color);

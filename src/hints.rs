@@ -719,10 +719,10 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
     // Before the REPEAT numbers: taking the doubled block out is what saves
     // blocks, while ending right at the goal can cost one (a FORWARD after the
     // REPEAT).
-    if used > level.par {
-        if let Some(n) = [&p.main, &p.func].into_iter().find_map(|l| doubled_end(l)) {
-            return doubled_end_hints(&goal, n);
-        }
+    if used > level.par
+        && let Some(n) = [&p.main, &p.func].into_iter().find_map(|l| doubled_end(l))
+    {
+        return doubled_end_hints(&goal, n);
     }
     let solution = solution_shape(level, &worlds);
     if !wins_cleanly(&shape, &solution) {
@@ -744,26 +744,26 @@ fn already_wins(level: &Level, p: &Program, start: &World, seed: u64) -> Vec<Hin
             None,
         )];
     }
-    if level.palette.contains(&Kind::Repeat) {
-        if let Some(r) = [&p.main, &p.func].into_iter().filter_map(|l| repeated_run(l)).max_by_key(|r| r.saves) {
-            let (same, those) = if r.len == 1 {
-                ("block happens".to_string(), "that block".to_string())
-            } else {
-                (format!("{} blocks happen", r.len), format!("those {} blocks", r.len))
-            };
-            let saves = if r.saves == 1 { "1 block".to_string() } else { format!("{} blocks", r.saves) };
-            return vec![
-                Hint::new(format!("{goal} Look for a pattern that happens again and again."), None),
-                Hint::new(
-                    format!("Starting at the outlined block, the same {same} {} times in a row.", r.times),
-                    Some(r.first),
-                ),
-                Hint::new(
-                    format!("Put {those} inside a REPEAT {} block. That saves {saves}!", r.times),
-                    Some(r.first),
-                ),
-            ];
-        }
+    if level.palette.contains(&Kind::Repeat)
+        && let Some(r) = [&p.main, &p.func].into_iter().filter_map(|l| repeated_run(l)).max_by_key(|r| r.saves)
+    {
+        let (same, those) = if r.len == 1 {
+            ("block happens".to_string(), "that block".to_string())
+        } else {
+            (format!("{} blocks happen", r.len), format!("those {} blocks", r.len))
+        };
+        let saves = if r.saves == 1 { "1 block".to_string() } else { format!("{} blocks", r.saves) };
+        return vec![
+            Hint::new(format!("{goal} Look for a pattern that happens again and again."), None),
+            Hint::new(
+                format!("Starting at the outlined block, the same {same} {} times in a row.", r.times),
+                Some(r.first),
+            ),
+            Hint::new(
+                format!("Put {those} inside a REPEAT {} block. That saves {saves}!", r.times),
+                Some(r.first),
+            ),
+        ];
     }
     let mut out = vec![Hint::new(goal, None)];
     if level.palette.contains(&Kind::Call) && repeats_steps(p) {

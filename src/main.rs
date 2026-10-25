@@ -584,11 +584,11 @@ async fn run() {
             ui.down = held;
         }
         // Autopilot: BC_CLICK=x,y clicks there 10 frames after the run finishes.
-        if let (Some(f), Some((x, y))) = (finished_at, &shot_click) {
-            if frame == f + 10 {
-                ui.mouse = vec2(*x, *y);
-                ui.click = true;
-            }
+        if let (Some(f), Some((x, y))) = (finished_at, &shot_click)
+            && frame == f + 10
+        {
+            ui.mouse = vec2(*x, *y);
+            ui.click = true;
         }
 
         let mut next = None;

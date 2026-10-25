@@ -464,7 +464,7 @@ impl Art {
         let portal = (0..4)
             .map(|f| {
                 tex(move |x, y| {
-                    if x < 2 || x > 13 || y < 2 || y > 13 {
+                    if !(2..=13).contains(&x) || !(2..=13).contains(&y) {
                         return if hash(x, y, 50) < 0.2 { rgb(70, 35, 100) } else { rgb(20, 12, 30) };
                     }
                     let (cx, cy) = (x as f32 - 7.5, y as f32 - 7.5);
@@ -592,7 +592,7 @@ impl Art {
             armor_empty: sprite(&ARMOR_ICON, &[('k', rgb(30, 30, 36)), ('G', rgb(70, 70, 80)), ('W', rgb(95, 95, 105))]),
             portal,
             portal_off: tex(|x, y| {
-                if x < 2 || x > 13 || y < 2 || y > 13 {
+                if !(2..=13).contains(&x) || !(2..=13).contains(&y) {
                     if hash(x, y, 50) < 0.2 { rgb(70, 35, 100) } else { rgb(20, 12, 30) }
                 } else {
                     shade(rgb(45, 28, 65), 0.85 + 0.3 * hash(x, y, 51))

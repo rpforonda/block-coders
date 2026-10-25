@@ -361,10 +361,11 @@ impl Editor {
         if !ui.enabled {
             self.drag = None;
         }
-        if let Some(d) = self.drag.as_mut() {
-            if !d.active && ui.mouse.distance(d.start) > DRAG_START {
-                d.active = true;
-            }
+        if let Some(d) = self.drag.as_mut()
+            && !d.active
+            && ui.mouse.distance(d.start) > DRAG_START
+        {
+            d.active = true;
         }
         let dragging = self.drag.filter(|d| d.active).map(|d| d.source);
 
@@ -419,14 +420,14 @@ impl Editor {
         }
         // Scroll the running block (or the one a hint points at) into view.
         let shown = running.or(self.hint);
-        if shown.is_some() && shown != self.last_highlight {
-            if let Some(r) = rows.iter().find(|r| {
+        if shown.is_some()
+            && shown != self.last_highlight
+            && let Some(r) = rows.iter().find(|r| {
                 r.kind == RowKind::Block && list_ref(p, &r.list).and_then(|l| l.get(r.index)).map(|n| n.id) == shown
-            }) {
-                if r.y - self.scroll > rows_area.h - ROW_H - 10.0 || r.y - self.scroll < 0.0 {
-                    self.scroll = r.y - rows_area.h / 2.0;
-                }
-            }
+            })
+            && (r.y - self.scroll > rows_area.h - ROW_H - 10.0 || r.y - self.scroll < 0.0)
+        {
+            self.scroll = r.y - rows_area.h / 2.0;
         }
         self.last_highlight = shown;
         self.scroll = self.scroll.clamp(0.0, (content_h - rows_area.h).max(0.0));

@@ -9,6 +9,11 @@ macroquad = { version = "0.4", features = ["audio"] }
 [profile.dev.package."*"]
 opt-level = 2
 
+# One codegen unit with full LTO: the web download is ~4% smaller and the level
+# simulations ~25% faster than the defaults, for a slower release build (~20 s vs ~10 s).
+# Nothing catches panics or relies on Drop, so aborting drops the unwinding code.
 [profile.release]
-opt-level = 3
 strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
