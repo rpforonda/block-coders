@@ -656,6 +656,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `world_checks::explanations_never_point_at_a_position` | No explanation says "the middle program", "Program B" and so on, since choices are shuffled |
 | `world_checks::banks_are_big_enough_and_well_formed` | 13+ questions per bank, unique ids, programs parse, spots on the map |
 | `world_checks::retries_get_new_questions` | 10 different questions per attempt, at least 3 new on every retry |
+| `world_checks::choices_are_shown_in_a_random_order` | The right answer is shown in each place about equally often, and every order of the choices comes up |
 | `world_checks::checks_gate_the_next_world` | Check unlock rules, old saves, the last world needing every check |
 | `world_checks::check_results_are_saved` | Check results round-trip, and hand-edited entries are cleaned |
 

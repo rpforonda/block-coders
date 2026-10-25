@@ -36,14 +36,24 @@ pub fn changes(q: &Question) -> bool {
     q.map.iter().any(|row| row.chars().any(|c| random_meaning(c).is_some()))
 }
 
+/// Fisher-Yates: every order is equally likely.
+fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
+    for i in (1..v.len()).rev() {
+        v.swap(i, rng.below(i + 1));
+    }
+}
+
+/// The order to show a question's `n` choices in: indexes into its choices,
+/// where 0 is the right one. Shuffled, so the right answer can be anywhere.
+pub fn choice_order(n: usize, rng: &mut Rng) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    shuffle(&mut order, rng);
+    order
+}
+
 /// Picks the questions for an attempt. Every question that wasn't in the
 /// previous attempt comes first, so each retry is mostly new questions.
 pub fn pick(bank: &'static [Question], last: &[String], rng: &mut Rng) -> Vec<&'static Question> {
-    let shuffle = |v: &mut Vec<&'static Question>, rng: &mut Rng| {
-        for i in (1..v.len()).rev() {
-            v.swap(i, rng.below(i + 1));
-        }
-    };
     let (mut fresh, mut seen): (Vec<_>, Vec<_>) = bank.iter().partition(|q| !last.iter().any(|id| id == q.id));
     shuffle(&mut fresh, rng);
     shuffle(&mut seen, rng);
@@ -227,17 +237,7 @@ impl CheckScreen {
     /// quitting halfway and coming back still gives a fresh mix.
     fn start_attempt(&mut self, progress: &mut Progress) {
         self.questions = pick(BANKS[self.chapter], &progress.check_last[self.chapter], &mut self.rng);
-        self.orders = self
-            .questions
-            .iter()
-            .map(|q| {
-                let mut o: Vec<usize> = (0..choice_count(q)).collect();
-                for i in (1..o.len()).rev() {
-                    o.swap(i, self.rng.below(i + 1));
-                }
-                o
-            })
-            .collect();
+        self.orders = self.questions.iter().map(|q| choice_order(choice_count(q), &mut self.rng)).collect();
         self.results.clear();
         self.picked = None;
         self.shown = 0;
