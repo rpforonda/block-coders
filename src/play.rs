@@ -3,6 +3,7 @@
 use crate::art::{draw_tex, Art};
 use crate::check::CHECKS;
 use crate::editor::{kind_color, Editor, Tab};
+use crate::fight::{Fight, Hurt, MAX_HEARTS, STAGES};
 use crate::hints::{self, Hint};
 
 /// How many changes Undo can go back.
@@ -42,6 +43,10 @@ enum Modal {
     Code,
     Victory,
     OtherWorld(u64, String),
+    /// A boss stage was just won: the boss lost a third of its health.
+    StageCleared,
+    /// The miner ran out of hearts in a boss fight.
+    KnockedOut,
 }
 
 pub enum Nav {
@@ -151,6 +156,14 @@ pub struct Play {
     tour: Option<Tour>,
     /// A click the tour kept from reaching the screen, for its own buttons.
     tour_click: bool,
+    /// The boss fight, on a boss level. `level` is then its current stage.
+    fight: Option<Fight>,
+    /// Shakes the hearts after a hit (1 = just hit).
+    heart_flash: f32,
+    /// Flashes the boss red when one of its crystals breaks.
+    boss_flash: f32,
+    /// The boss's health bar as drawn, sliding down to the real value.
+    boss_bar: f32,
 }
 
 /// Where palette block `i` is drawn in the palette's `list` when it isn't scrolled.
@@ -188,7 +201,8 @@ fn ease(t: f32) -> f32 {
 
 impl Play {
     pub fn new(idx: usize, saved: Option<Program>, speed: usize, shirt: usize) -> Play {
-        let level = &LEVELS[idx];
+        let fight = LEVELS[idx].boss.map(Fight::new);
+        let level = fight.as_ref().map_or(&LEVELS[idx], |f| f.level());
         let program = saved.unwrap_or_default();
         // A first visit to level 1 gets the guided tour instead of the intro.
         let tour = (idx == 0 && program.is_empty()).then(|| Tour::new(crate::keyboard::is_touch()));
@@ -213,7 +227,7 @@ impl Play {
             running_id: None,
             error_id: None,
             speed,
-            modal: if level.intro.is_some() && tour.is_none() { Modal::Intro } else { Modal::None },
+            modal: if LEVELS[idx].intro.is_some() && tour.is_none() { Modal::Intro } else { Modal::None },
             win_timer: None,
             stars: 0,
             shake: 0.0,
@@ -232,6 +246,10 @@ impl Play {
             code_bar: Scrollbar::default(),
             tour,
             tour_click: false,
+            fight,
+            heart_flash: 0.0,
+            boss_flash: 0.0,
+            boss_bar: STAGES as f32,
         };
         p.reset_run();
         p
@@ -260,6 +278,62 @@ impl Play {
     }
     pub fn debug_finished(&self) -> bool {
         self.state == RunState::Done && self.win_timer.is_none() && self.particles.len() < 5
+    }
+
+    /// The intro shown when the level opens or Help is pressed: a boss
+    /// fight's own intro until its first stage is cleared, then the stage's.
+    fn intro(&self) -> Option<(&'static str, &'static str)> {
+        match &self.fight {
+            Some(f) if f.stage > 0 => f.level().intro,
+            _ => LEVELS[self.idx].intro,
+        }
+    }
+
+    /// In a boss fight, a run where the miner gets hurt costs half a heart.
+    fn hurt(&mut self, sfx: &Sounds) {
+        let Some(f) = self.fight.as_mut() else { return };
+        let out = f.hurt();
+        if out == Hurt::Already {
+            return;
+        }
+        self.heart_flash = 1.0;
+        // Wording picked with TypeSafe (see docs/DESIGN.md).
+        self.floaters.push(Floater {
+            pos: vec2(self.world.pos.0 as f32 + 0.5, self.world.pos.1 as f32 + 0.1),
+            text: "Ouch!".into(),
+            color: rgb8(255, 110, 110),
+            life: 1.2,
+        });
+        if out == Hurt::KnockedOut {
+            sfx.play(Sfx::Fail);
+            self.modal = Modal::KnockedOut;
+        }
+    }
+
+    /// After a knockout: full hearts, and the same stage again.
+    fn get_up(&mut self) {
+        if let Some(f) = self.fight.as_mut() {
+            f.get_up();
+        }
+        self.modal = Modal::None;
+        self.reset_run();
+    }
+
+    /// On to the boss fight's current stage, keeping the program.
+    fn next_stage(&mut self) {
+        let Some(f) = &self.fight else { return };
+        self.level = f.level();
+        self.hints = None;
+        self.modal = Modal::None;
+        self.new_world(fresh_seed());
+    }
+
+    /// Fights the boss again from the start.
+    fn restart_fight(&mut self) {
+        let Some(boss) = LEVELS[self.idx].boss else { return };
+        self.fight = Some(Fight::new(boss));
+        self.boss_bar = STAGES as f32;
+        self.next_stage();
     }
 
     fn say(&mut self, msg: impl Into<String>, kind: MsgKind) {
@@ -296,12 +370,20 @@ impl Play {
         if w.emeralds_total > 0 {
             parts.push(format!("collect all {} emeralds", w.emeralds_total));
         }
-        let mut s = String::from("Goal: ");
-        if !parts.is_empty() {
-            s.push_str(&parts.join(" and "));
-            s.push_str(", then ");
+        if w.crystals_total > 0 {
+            parts.push(format!("break all {} crystal{}", w.crystals_total, if w.crystals_total == 1 { "" } else { "s" }));
         }
-        s.push_str("walk into the portal.");
+        let mut s = String::from("Goal: ");
+        if !w.has_portal {
+            s.push_str(&parts.join(" and "));
+            s.push('.');
+        } else {
+            if !parts.is_empty() {
+                s.push_str(&parts.join(" and "));
+                s.push_str(", then ");
+            }
+            s.push_str("walk into the portal.");
+        }
         if self.level.max_blocks.is_some() {
             s.push_str(&format!(" You can use up to {} blocks.", self.level.max_blocks.unwrap()));
         }
@@ -345,6 +427,9 @@ impl Play {
             return false;
         }
         self.vm = Some(Vm::new(&self.program));
+        if let Some(f) = self.fight.as_mut() {
+            f.start_run();
+        }
         self.state = RunState::Running;
         self.stepping = stepping;
         if stepping {
@@ -362,6 +447,7 @@ impl Play {
         self.say(format!("{msg}  (The block with the red outline is where it went wrong. Press RESET and try again!)"), MsgKind::Error);
         self.shake = 0.35;
         sfx.play(Sfx::Fail);
+        self.hurt(sfx);
     }
 
     fn step_once(&mut self, sfx: &Sounds) {
@@ -456,11 +542,25 @@ impl Play {
             self.say("It worked in this world... but not in every world!", MsgKind::Error);
             self.modal = Modal::OtherWorld(seed, e);
             sfx.play(Sfx::Fail);
+            // A lucky win doesn't hurt the boss, and costs half a heart.
+            self.hurt(sfx);
+            return;
+        }
+        if let Some(f) = self.fight.as_mut()
+            && !f.clear_stage()
+        {
+            sfx.play(Sfx::Win);
+            self.say("Stage cleared!", MsgKind::Success);
+            self.boss_flash = 1.0;
+            self.modal = Modal::StageCleared;
             return;
         }
         let used = self.program.block_count();
         let par = self.level.par;
-        self.stars = if used <= par { 3 } else if used <= par + 3 { 2 } else { 1 };
+        self.stars = match &self.fight {
+            Some(f) => f.stars(),
+            None => if used <= par { 3 } else if used <= par + 3 { 2 } else { 1 },
+        };
         progress.stars[self.idx] = progress.stars[self.idx].max(self.stars);
         progress.programs[self.idx] = Some(self.program.clone());
         if self.saved(progress) == Saved::StartedOverElsewhere {
@@ -503,6 +603,12 @@ impl Play {
     fn update(&mut self, dt: f32, sfx: &Sounds, progress: &mut Progress) {
         self.shake = (self.shake - dt).max(0.0);
         self.count_flash = (self.count_flash - dt * 1.5).max(0.0);
+        self.heart_flash = (self.heart_flash - dt * 1.5).max(0.0);
+        self.boss_flash = (self.boss_flash - dt * 1.5).max(0.0);
+        if let Some(f) = &self.fight {
+            // The boss's health bar slides down after a stage.
+            self.boss_bar += (f.boss_health() as f32 - self.boss_bar) * (dt * 3.0).min(1.0);
+        }
         let mut fire = None;
         if let Some(a) = self.anim.as_mut() {
             a.t += dt;
@@ -521,9 +627,20 @@ impl Play {
                 sfx.play(Sfx::Mine);
                 let cols: Vec<Color> = match old {
                     Tile::Ore => vec![rgb8(127, 127, 127), rgb8(90, 225, 215), rgb8(200, 255, 250)],
+                    Tile::Crystal => vec![rgb8(225, 110, 245), rgb8(255, 200, 255), rgb8(160, 50, 200)],
                     _ => vec![rgb8(127, 127, 127), rgb8(95, 95, 95), rgb8(160, 160, 160)],
                 };
                 self.burst(target, &cols, 16);
+                if old == Tile::Crystal {
+                    self.boss_flash = 0.8;
+                    sfx.play(Sfx::Collect);
+                    self.floaters.push(Floater {
+                        pos: vec2(target.0 as f32 + 0.5, target.1 as f32 + 0.2),
+                        text: "Crack!".into(),
+                        color: rgb8(240, 160, 255),
+                        life: 1.0,
+                    });
+                }
             }
             match gem {
                 Some(true) => {
@@ -666,7 +783,12 @@ impl Play {
                 }
             }
         } else if is_key_pressed(KeyCode::Escape) {
-            self.modal = Modal::None;
+            // A boss popup can't just be closed: the fight has to move on.
+            match self.modal {
+                Modal::StageCleared => self.next_stage(),
+                Modal::KnockedOut => self.get_up(),
+                _ => self.modal = Modal::None,
+            }
         }
 
         ui.enabled = !modal_open;
@@ -683,7 +805,10 @@ impl Play {
             nav = Nav::Back;
         }
         let ch = &CHAPTERS[self.level.chapter];
-        let title = format!("Level {}: {}", self.idx + 1, self.level.name);
+        let title = match &self.fight {
+            Some(f) => format!("Level {}: {} - stage {} of {STAGES}", self.idx + 1, LEVELS[self.idx].name, f.stage.min(STAGES - 1) + 1),
+            None => format!("Level {}: {}", self.idx + 1, self.level.name),
+        };
         // The title shrinks (a little) to stop short of the buttons or the stars.
         let room = match lay.shape {
             Shape::Wide => lay.code.x - lay.title.x - 16.0,
@@ -713,7 +838,7 @@ impl Play {
         }
         if ui.button(lay.help, "Help", rgb8(60, 140, 90), 18.0) {
             sfx.play(Sfx::Click);
-            if self.level.intro.is_some() {
+            if self.intro().is_some() {
                 self.modal = Modal::Intro;
             } else {
                 self.show_hint();
@@ -727,6 +852,7 @@ impl Play {
 
         // ---- World ----
         self.draw_world(art);
+        self.draw_fight_overlay(art);
 
         // ---- HUD ----
         self.draw_hud(ui, art, sfx);
@@ -885,6 +1011,11 @@ impl Play {
                     draw_ellipse(px + ts / 2.0, py + ts * 0.8, s * 0.35, s * 0.12, 0.0, Color::new(0.0, 0.0, 0.0, 0.25));
                     draw_tex(&art.emerald, px + (ts - s) / 2.0, py + (ts - s) / 2.0 + bob - ts * 0.05, s, s, WHITE);
                 }
+                if t == Tile::Crystal {
+                    // Power crystals glow.
+                    let g = ((time * 3.0 + (x + y) as f64).sin() * 0.12 + 0.18) as f32;
+                    draw_rectangle(px, py, ts, ts, Color::new(0.9, 0.5, 1.0, g));
+                }
                 if t == Tile::Portal && portal_on {
                     let g = ((time * 4.0).sin() * 0.15 + 0.25) as f32;
                     draw_rectangle(px, py, ts, ts, Color::new(0.8, 0.5, 1.0, g * 0.5));
@@ -909,6 +1040,24 @@ impl Play {
                 for &(x0, y0, x1, y1) in cracks.iter().take(stage as usize + 1) {
                     draw_line(tx + x0 * ts, ty + y0 * ts, tx + x1 * ts, ty + y1 * ts, (ts / 16.0).max(2.0), c);
                 }
+            }
+        }
+
+        // The boss, drawn once over all of its squares.
+        if let Some(f) = &self.fight {
+            let body: Vec<(i32, i32)> =
+                (0..w.h).flat_map(|y| (0..w.w).map(move |x| (x, y))).filter(|&c| w.tile(c) == Tile::Boss).collect();
+            if let (Some(x0), Some(x1), Some(y0), Some(y1)) = (
+                body.iter().map(|c| c.0).min(),
+                body.iter().map(|c| c.0).max(),
+                body.iter().map(|c| c.1).min(),
+                body.iter().map(|c| c.1).max(),
+            ) {
+                let bob = ((time * 2.0).sin() * ts as f64 * 0.04) as f32;
+                let red = self.boss_flash.min(1.0) * 0.7;
+                let (bw, bh) = ((x1 - x0 + 1) as f32 * ts, (y1 - y0 + 1) as f32 * ts);
+                let tint = Color::new(1.0, 1.0 - red, 1.0 - red, 1.0);
+                draw_tex(art.boss(f.boss.kind), ox + x0 as f32 * ts, oy + y0 as f32 * ts + bob, bw, bh, tint);
             }
         }
 
@@ -944,6 +1093,49 @@ impl Play {
         for f in &self.floaters {
             let wdt = text_width(&f.text, 20.0);
             shadow_text(&f.text, ox + f.pos.x * ts - wdt / 2.0, oy + f.pos.y * ts, 20.0, f.color.with_alpha(f.life.min(1.0)));
+        }
+    }
+
+    /// In a boss fight: the boss's health bar across the top of the world, in
+    /// thirds (one per stage), and the miner's hearts along the bottom, like
+    /// in Minecraft.
+    fn draw_fight_overlay(&self, art: &Art) {
+        let Some(f) = &self.fight else { return };
+        let area = self.lay.world;
+        let name = LEVELS[self.idx].name;
+        let bw = (area.w * 0.6).min(420.0);
+        let bar = Rect::new(area.x + (area.w - bw) / 2.0, area.y + 30.0, bw, 14.0);
+        draw_rectangle(bar.x - 8.0, area.y + 4.0, bar.w + 16.0, 48.0, Color::new(0.0, 0.0, 0.0, 0.5));
+        shadow_text(name, bar.x + (bar.w - text_width(name, 18.0)) / 2.0, area.y + 6.0, 18.0, WHITE);
+        draw_rectangle(bar.x - 2.0, bar.y - 2.0, bar.w + 4.0, bar.h + 4.0, BLACK);
+        draw_rectangle(bar.x, bar.y, bar.w, bar.h, rgb8(60, 20, 30));
+        let fill = (self.boss_bar / STAGES as f32).clamp(0.0, 1.0);
+        draw_rectangle(bar.x, bar.y, bar.w * fill, bar.h, rgb8(215, 45, 75));
+        for i in 1..STAGES {
+            let x = bar.x + bar.w * i as f32 / STAGES as f32;
+            draw_rectangle(x - 1.0, bar.y, 2.0, bar.h, BLACK);
+        }
+        let hearts = usize::from(MAX_HEARTS / 2);
+        let (hw, hh) = (24.0, 24.0 * 8.0 / 9.0);
+        let shake = (get_time() * 50.0).sin() as f32 * 3.0 * self.heart_flash;
+        let y = area.y + area.h - hh - 10.0;
+        let x0 = area.x + 12.0;
+        draw_rectangle(x0 - 6.0, y - 5.0, hearts as f32 * (hw + 4.0) + 8.0, hh + 10.0, Color::new(0.0, 0.0, 0.0, 0.5));
+        for i in 0..hearts {
+            let x = x0 + i as f32 * (hw + 4.0) + shake;
+            draw_tex(&art.heart_empty, x, y, hw, hh, WHITE);
+            let have = i32::from(f.hearts) - 2 * i as i32;
+            if have >= 2 {
+                draw_tex(&art.heart_full, x, y, hw, hh, WHITE);
+            } else if have == 1 {
+                // Half a heart: the left half of a full one.
+                let params = DrawTextureParams {
+                    dest_size: Some(vec2(hw * 5.0 / 9.0, hh)),
+                    source: Some(Rect::new(0.0, 0.0, 5.0, 8.0)),
+                    ..Default::default()
+                };
+                draw_texture_ex(&art.heart_full, x, y, WHITE, params);
+            }
         }
     }
 
@@ -1022,6 +1214,11 @@ impl Play {
         if w.emeralds_total > 0 {
             draw_tex(&art.emerald, x, y + 6.0, 26.0, 26.0, WHITE);
             shadow_text(&format!("{} / {}", w.emeralds, w.emeralds_total), x + 32.0, y + 10.0, 20.0, rgb8(150, 255, 170));
+            x += gem_step;
+        }
+        if w.crystals_total > 0 {
+            draw_tex(&art.crystal, x, y + 6.0, 26.0, 26.0, WHITE);
+            shadow_text(&format!("{} / {}", w.crystals, w.crystals_total), x + 32.0, y + 10.0, 20.0, rgb8(240, 170, 255));
             x += gem_step;
         }
         // The `count` variable, drawn as a labelled box holding its number.
@@ -1201,7 +1398,7 @@ impl Play {
         match &self.modal {
             Modal::None => None,
             Modal::Intro => {
-                let (title, body) = self.level.intro.unwrap_or(("", ""));
+                let (title, body) = self.intro().unwrap_or(("", ""));
                 let r = self.lay.popup(760.0, 540.0, 120.0);
                 let narrow = r.w < 600.0;
                 panel(r);
@@ -1318,41 +1515,112 @@ impl Play {
                 }
                 out
             }
+            Modal::StageCleared => {
+                let Some(f) = &self.fight else { return None };
+                let boss = LEVELS[self.idx].name;
+                let cleared = f.stage;
+                let lesson = f.boss.stages[cleared - 1].lesson;
+                let left = STAGES - cleared;
+                let next_intro = f.level().intro.map(|i| i.1);
+                let r = self.lay.popup(680.0, 440.0, 120.0);
+                panel(r);
+                let title = format!("Stage {cleared} cleared!");
+                let size = fit_size(&title, r.w - 40.0, 40.0, 26.0);
+                text_centered(&title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, TITLE_ON_LIGHT, false);
+                // Wording picked with TypeSafe (see docs/DESIGN.md).
+                let more = if left == 1 { "1 more stage to go!".to_string() } else { format!("{left} more stages to go!") };
+                let line = format!("{lesson} {boss} lost a third of its health. {more}");
+                let mut y = r.y + 80.0;
+                y += centered_paragraph(&line, r.x + 30.0, y, r.w - 60.0, 20.0, rgb8(30, 30, 30)) + 16.0;
+                if let Some(body) = next_intro {
+                    // The box fits the next stage's briefing.
+                    let h = (wrap(body, r.w - 80.0, 19.0).len() as f32 * 19.0 * 1.3 + 28.0).min(r.y + r.h - 86.0 - y);
+                    draw_rectangle(r.x + 24.0, y, r.w - 48.0, h, rgb8(60, 60, 72));
+                    paragraph(body, r.x + 40.0, y + 14.0, r.w - 80.0, 19.0, WHITE);
+                }
+                let by = r.y + r.h - 68.0;
+                let mut out = None;
+                if ui.button(Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0), "Next stage >", rgb8(60, 170, 60), 24.0) {
+                    sfx.play(Sfx::Click);
+                    self.next_stage();
+                }
+                if ui.button(Rect::new(r.x + 30.0, by, 160.0, 48.0), "Levels", rgb8(110, 110, 120), 22.0) {
+                    sfx.play(Sfx::Click);
+                    out = Some(Nav::Back);
+                }
+                out
+            }
+            Modal::KnockedOut => {
+                let stage = self.fight.as_ref().map_or(1, |f| f.stage + 1);
+                let r = self.lay.popup(640.0, 380.0, 160.0);
+                panel(r);
+                draw_tex(&art.bit, r.x + 24.0, r.y + 24.0, 72.0, 72.0, WHITE);
+                text("Knocked out!", r.x + 116.0, r.y + 40.0, 34.0, WARN_ON_LIGHT);
+                // Wording picked with TypeSafe (see docs/DESIGN.md).
+                let msg = format!(
+                    "Oof! You ran out of hearts. Take a breath, look for the bug, and try stage {stage} again with full hearts."
+                );
+                paragraph(&msg, r.x + 30.0, r.y + 116.0, r.w - 60.0, 21.0, rgb8(30, 30, 30));
+                let by = r.y + r.h - 68.0;
+                let mut out = None;
+                if ui.button(Rect::new(r.x + r.w - 230.0, by, 200.0, 48.0), "Try again", rgb8(60, 170, 60), 24.0) {
+                    sfx.play(Sfx::Click);
+                    self.get_up();
+                }
+                if ui.button(Rect::new(r.x + 30.0, by, 160.0, 48.0), "Levels", rgb8(110, 110, 120), 22.0) {
+                    sfx.play(Sfx::Click);
+                    out = Some(Nav::Back);
+                }
+                out
+            }
             Modal::Victory => {
                 let last = self.idx + 1 >= LEVELS.len();
                 // Narrow screens stack the buttons in two rows, so the popup is taller.
                 let narrow = self.lay.w < 700.0;
                 let r = self.lay.popup(680.0, if narrow { 600.0 } else { 520.0 }, 130.0);
                 panel(r);
-                let title = if last { "YOU BEAT THE GAME!" } else { "Level complete!" };
-                let size = fit_size(title, r.w - 40.0, 40.0, 26.0);
-                text_centered(title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, TITLE_ON_LIGHT, false);
+                let title = match &self.fight {
+                    _ if last => "YOU BEAT THE GAME!".to_string(),
+                    Some(_) => format!("You defeated {}!", LEVELS[self.idx].name),
+                    None => "Level complete!".to_string(),
+                };
+                let size = fit_size(&title, r.w - 40.0, 40.0, 26.0);
+                text_centered(&title, Rect::new(r.x, r.y + 20.0, r.w, 44.0), size, TITLE_ON_LIGHT, false);
                 for i in 0..3 {
                     let pop = ((get_time() * 3.0 + i as f64).sin() * 2.0) as f32;
                     star(r.x + r.w / 2.0 - 90.0 + i as f32 * 90.0, r.y + 120.0 + pop, 34.0, i < self.stars as usize);
                 }
                 let used = self.program.block_count();
                 let mut y = r.y + 172.0;
-                text_centered(&format!("You used {used} blocks."), Rect::new(r.x, y, r.w, 26.0), 22.0, rgb8(30, 30, 30), false);
-                y += 30.0;
-                let extra = if self.stars < 3 {
-                    format!("Can you solve it with only {} blocks? Try again for 3 stars!", self.level.par)
-                } else {
-                    "Perfect! That's as short as it gets.".to_string()
+                let (said, extra) = match &self.fight {
+                    Some(f) => (
+                        hearts_lost(f.lost),
+                        if self.stars < 3 { "Lose 1 heart or less for 3 stars!".to_string() } else { "A perfect fight!".to_string() },
+                    ),
+                    None => (
+                        format!("You used {used} blocks."),
+                        if self.stars < 3 {
+                            format!("Can you solve it with only {} blocks? Try again for 3 stars!", self.level.par)
+                        } else {
+                            "Perfect! That's as short as it gets.".to_string()
+                        },
+                    ),
                 };
+                text_centered(&said, Rect::new(r.x, y, r.w, 26.0), 22.0, rgb8(30, 30, 30), false);
+                y += 30.0;
                 y += centered_paragraph(&extra, r.x + 20.0, y, r.w - 40.0, 19.0, rgb8(60, 60, 60)) + 15.0;
                 draw_rectangle(r.x + 30.0, y, r.w - 60.0, 184.0, rgb8(40, 80, 50));
                 shadow_text("What you learned:", r.x + 46.0, y + 12.0, 20.0, rgb8(160, 255, 170));
                 let ch = self.level.chapter;
                 let world_end = !last && LEVELS[self.idx + 1].chapter != ch;
                 let lesson = if world_end && ch < CHECKS && !progress.checks[ch] {
-                    format!("{}\n\nYou finished {}! Pass the World Check to move on.", self.level.lesson, CHAPTERS[ch].name)
+                    format!("{}\n\nYou finished {}! Pass the World Check to move on.", LEVELS[self.idx].lesson, CHAPTERS[ch].name)
                 } else if world_end && !progress.unlocked(self.idx + 1) {
-                    format!("{}\n\nThe {} opens once every World Check is passed.", self.level.lesson, CHAPTERS[ch + 1].name)
+                    format!("{}\n\nThe {} opens once every World Check is passed.", LEVELS[self.idx].lesson, CHAPTERS[ch + 1].name)
                 } else if last {
-                    format!("{}\n\nYou earned {} of {} stars. Keep going - maybe one day YOU'LL make games like this!", self.level.lesson, progress.total_stars(), LEVELS.len() * 3)
+                    format!("{}\n\nYou earned {} of {} stars. Keep going - maybe one day YOU'LL make games like this!", LEVELS[self.idx].lesson, progress.total_stars(), LEVELS.len() * 3)
                 } else {
-                    self.level.lesson.to_string()
+                    LEVELS[self.idx].lesson.to_string()
                 };
                 paragraph(&lesson, r.x + 46.0, y + 42.0, r.w - 92.0, 19.0, WHITE);
                 let by = r.y + r.h - 68.0;
@@ -1382,6 +1650,7 @@ impl Play {
                     sfx.play(Sfx::Click);
                     self.modal = Modal::None;
                     self.reset_run();
+                    self.restart_fight();
                 }
                 let levels_r = if narrow {
                     Rect::new(r.x + 50.0 + half, by, half, 48.0)
@@ -1395,6 +1664,17 @@ impl Play {
                 out
             }
         }
+    }
+}
+
+/// How many hearts a boss fight cost, from the half-hearts lost.
+fn hearts_lost(half: u32) -> String {
+    match (half / 2, half % 2 == 1) {
+        (0, false) => "You didn't lose a single heart!".to_string(),
+        (0, true) => "You lost half a heart.".to_string(),
+        (1, false) => "You lost 1 heart.".to_string(),
+        (n, false) => format!("You lost {n} hearts."),
+        (n, true) => format!("You lost {n} and a half hearts."),
     }
 }
 

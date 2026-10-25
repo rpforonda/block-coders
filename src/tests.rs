@@ -3,13 +3,40 @@ use crate::program::{kinds_used, simulate, Program};
 use crate::program::{Step, Vm};
 use crate::world::{Outcome, World};
 
+/// A level or boss stage by name.
 fn level(name: &str) -> &'static crate::levels::Level {
-    LEVELS.iter().find(|l| l.name == name).unwrap_or_else(|| panic!("no level {name}"))
+    crate::levels::playable().find(|l| l.name == name).unwrap_or_else(|| panic!("no level {name}"))
+}
+
+/// Every world with a World Check ends with one boss level, which introduces
+/// itself. The last world is all master challenges, so it has none.
+#[test]
+fn every_world_with_a_check_ends_with_its_boss() {
+    for c in 0..crate::levels::CHAPTERS.len() {
+        let levels: Vec<_> = LEVELS.iter().filter(|l| l.chapter == c).collect();
+        let bosses: Vec<&str> = levels.iter().filter(|l| l.boss.is_some()).map(|l| l.name).collect();
+        if c < crate::check::CHECKS {
+            let last = levels.last().unwrap();
+            assert_eq!(bosses, [last.name], "world {}: one boss, at the end", c + 1);
+            assert!(last.intro.is_some(), "{}: a boss introduces itself", last.name);
+            // Every stage is fought in the boss's arena, with crystals to break.
+            for s in &last.boss.unwrap().stages {
+                assert_eq!(s.chapter, last.chapter, "{}: stage in the wrong world", s.name);
+                for map in s.maps {
+                    let text = map.concat();
+                    assert!(text.contains('X'), "{}: a stage needs crystals to break", s.name);
+                    assert_eq!(text.matches('K').count(), 4, "{}: the boss fills 2x2 squares", s.name);
+                }
+            }
+        } else {
+            assert!(bosses.is_empty(), "world {}: no boss", c + 1);
+        }
+    }
 }
 
 #[test]
 fn level_list_is_sane() {
-    assert_eq!(LEVELS.len(), 66);
+    assert_eq!(LEVELS.len(), 72);
     let mut names: Vec<&str> = LEVELS.iter().map(|l| l.name).collect();
     assert!(names.iter().all(|n| !n.contains(';') && !n.is_empty()));
     names.sort();
@@ -28,8 +55,17 @@ fn level_list_is_sane() {
             assert!(!text.contains(['{', '}', ';']), "{}: uses typed-code symbols", l.name);
         }
     }
+    // Boss stages are played like levels, so their words follow the same rules.
+    for b in LEVELS.iter().filter_map(|l| l.boss) {
+        for s in &b.stages {
+            assert!(!s.hint.is_empty() && !s.lesson.is_empty(), "{}: needs a hint and lesson", s.name);
+            for text in [s.hint, s.lesson, s.intro.map_or("", |i| i.1)] {
+                assert!(!text.contains(['{', '}', ';']), "{}: uses typed-code symbols", s.name);
+            }
+        }
+    }
     for old in crate::levels::LEGACY_ORDER {
-        level(old);
+        LEVELS.iter().find(|l| l.name == old).unwrap_or_else(|| panic!("no level {old}"));
     }
 }
 
@@ -45,7 +81,7 @@ fn solutions_only_use_available_conditions() {
             conds(&n.els, out);
         }
     }
-    for l in LEVELS {
+    for l in crate::levels::playable() {
         let p = Program::deserialize(l.solution).unwrap();
         let mut used = Vec::new();
         conds(&p.main, &mut used);
@@ -60,7 +96,7 @@ fn solutions_only_use_available_conditions() {
 /// in some other world. Otherwise kids could win without IF/WHILE.
 #[test]
 fn dynamic_levels_cannot_be_hardcoded() {
-    for l in LEVELS.iter().filter(|l| l.is_random()) {
+    for l in crate::levels::playable().filter(|l| l.is_random()) {
         let sol = Program::deserialize(l.solution).unwrap();
         let mut w = World::from_level(l, 7);
         let mut vm = Vm::new(&sol);
@@ -91,7 +127,7 @@ fn dynamic_levels_cannot_be_hardcoded() {
 
 #[test]
 fn maps_are_well_formed() {
-    for l in LEVELS {
+    for l in crate::levels::playable() {
         for map in l.maps {
             let w = map[0].len();
             assert!(map.iter().all(|r| r.len() == w), "{}: ragged rows", l.name);
@@ -105,7 +141,7 @@ fn maps_are_well_formed() {
 #[test]
 fn every_solution_wins_in_every_world() {
     let mut broken = Vec::new();
-    for l in LEVELS {
+    for l in crate::levels::playable() {
         let p = Program::deserialize(l.solution).unwrap_or_else(|| panic!("{}: bad solution", l.name));
         if p.block_count() != l.par {
             broken.push(format!("{}: par is {} but the solution uses {} blocks", l.name, l.par, p.block_count()));
@@ -130,7 +166,7 @@ fn every_solution_wins_in_every_world() {
 
 #[test]
 fn serialize_round_trips() {
-    for l in LEVELS {
+    for l in crate::levels::playable() {
         let p = Program::deserialize(l.solution).unwrap();
         let again = Program::deserialize(&p.serialize()).unwrap();
         assert_eq!(p.serialize(), again.serialize());
@@ -160,6 +196,14 @@ fn shortcuts_fail_somewhere() {
         ("Echo Hall", "[W0 F ] R [W0 F ] L [W0 F ]"),       // walks to the walls instead of counting
         ("Echo Hall", "[W0 F ] R [R3 F ] L [R6 F ] F"),     // a fixed distance
         ("Stone Counter", "[W3 M F ] R [W0 F ] L [W0 F ]"),
+        ("Dune Scorpion 3", "[R2 [R5 [E3 M | P ] F L [I4 M ] R ] M R ]"),            // places a block on empty squares
+        ("Dune Scorpion 3", "[R2 [R5 [E3 M | [I5 P ] ] F L M R ] M R ]"),            // mines without a diamond
+        ("The Gloom 2", "[W7 [E0 F | [E1 L | R ] ] ]"),                              // never breaks the crystals
+        ("The Gloom 3", "[W7 [I3 M ] [I5 P ] [E0 F | [E1 L | [E2 R | M ] ] ] ]"),     // ignores water
+        ("Abacus Golem 2", "[W3 M F ] R [W0 F ] L M"),                               // walks down to the wall
+        ("Abacus Golem 2", "[W3 M F ] R F L F R [W0 F ] M"),                         // walks down the crystal's column
+        ("Abacus Golem 3", "[R2 [W3 M F A1 ] R [V0 F ] L ] M"),                       // never empties the box
+        ("Abacus Golem 3", "[W3 M F A1 ] R [V0 F ] L [W3 M F ] F R [W0 F ] M"),      // walks down to the crystal's row
     ];
     for (name, src) in cases {
         let l = level(name);
@@ -256,12 +300,14 @@ fn players_can_be_created_reset_and_deleted() {
     assert!(old.programs[idx("The Long Hallway")].is_some());
     // New levels inserted before an old player's furthest level stay open.
     assert!(old.unlocked(idx("Zig Zag")) && old.unlocked(idx("Maybe a Stone")));
-    // The next level is the first of the last world, which needs every World Check.
-    assert!(!old.unlocked(idx("Deep Dark Gauntlet") + 1));
+    // A boss level added after their furthest level opens for them, but the
+    // next world still needs its World Check.
+    assert!(old.unlocked(idx("The Gloom")));
+    assert!(!old.unlocked(idx("The Gloom") + 1));
     let mut checked = Progress::load(9);
     checked.checks.iter_mut().for_each(|c| *c = true);
-    assert!(checked.unlocked(idx("Deep Dark Gauntlet") + 1));
-    assert!(!checked.unlocked(idx("Deep Dark Gauntlet") + 2));
+    assert!(checked.unlocked(idx("The Gloom") + 1));
+    assert!(!checked.unlocked(idx("The Gloom") + 2));
     // ...and saving writes names, which load back the same.
     old.save();
     assert!(std::fs::read_to_string(data.join("user-9.txt")).unwrap().contains("The Long Hallway;3;"));
@@ -939,7 +985,6 @@ mod world_checks {
 mod smart_hints {
     use super::level;
     use crate::hints::{failing_test_world, ladder, Hint};
-    use crate::levels::LEVELS;
     use crate::program::{contains, simulate, Node, Program};
     use crate::world::World;
 
@@ -1176,7 +1221,7 @@ mod smart_hints {
             }
         }
         let mut rng = Rng::new(3);
-        for l in LEVELS {
+        for l in crate::levels::playable() {
             for _ in 0..12 {
                 let mut p = Program::deserialize(l.solution).unwrap();
                 for _ in 0..1 + rng.below(3) {
@@ -1240,7 +1285,7 @@ mod smart_hints {
                 .map(|n| Node { body: without(&n.body, id), els: without(&n.els, id), ..n.clone() })
                 .collect()
         }
-        for l in LEVELS {
+        for l in crate::levels::playable() {
             let sol = Program::deserialize(l.solution).unwrap();
             let mut ids = Vec::new();
             simple_ids(&sol.main, &mut ids);
@@ -1453,13 +1498,16 @@ mod variables {
             // A lawnmower sweep finds the portal without counting, but needs more blocks.
             ("Echo Hall", "[R3 [W0 F ] R F R [W0 F ] L F L ]"),
             ("Stone Counter", "R [R3 [W0 F ] L F L [W0 F ] R F R ]"),
+            ("Abacus Golem 1", "M F M F M F M F R M F M F M F M"),
+            // Counting both walls without REPEAT 2.
+            ("Abacus Golem 3", "[W3 M F A1 ] R [V0 F ] L S0 [W3 M F A1 ] R [V0 F ] L M"),
         ];
         for (name, src) in too_long {
             let l = level(name);
             let p = Program::deserialize(src).unwrap();
             assert!(p.block_count() > l.max_blocks.unwrap(), "{name}: {src} fits in the block limit");
         }
-        for l in crate::levels::LEVELS.iter().filter(|l| l.chapter == 5) {
+        for l in crate::levels::playable().filter(|l| l.chapter == 5) {
             let p = Program::deserialize(l.solution).unwrap();
             let mut used = Vec::new();
             crate::program::kinds_used(&p.main, &mut used);
@@ -1469,7 +1517,6 @@ mod variables {
 }
 
 mod panels {
-    use crate::levels::LEVELS;
     use crate::ui::{Scrollbar, Ui, VH, VW};
     use macroquad::math::{vec2, Rect};
 
@@ -1495,7 +1542,7 @@ mod panels {
             let b = crate::play::palette_button(list, i);
             assert!(b.y >= list.y && b.y + b.h <= list.y + list.h, "block {i} doesn't fit");
         }
-        let most = LEVELS.iter().map(|l| l.palette.len()).max().unwrap();
+        let most = crate::levels::playable().map(|l| l.palette.len()).max().unwrap();
         assert!(most > rows, "test the scrolling case: the biggest palette ({most}) should need it");
     }
 
@@ -1705,6 +1752,7 @@ mod contrast {
         for bg in [rgb(60, 60, 60), rgb(70, 70, 70)] {
             assert!(contrast(LOCKED_TEXT, bg) >= 4.5);
         }
+        assert!(contrast(BOSS_BANNER, WHITE) >= MIN_CONTRAST, "BOSS banner: {}", contrast(BOSS_BANNER, WHITE));
         for ch in &CHAPTERS {
             let c = rgb(ch.color.0, ch.color.1, ch.color.2);
             let chosen = readable_bg(c);
@@ -1927,6 +1975,69 @@ mod menu_layouts {
             for cap in [KeyCap::Space, KeyCap::Erase, KeyCap::Shift, KeyCap::Hide] {
                 assert!(keys.iter().any(|k| k.0 == cap), "{name}: no {cap:?} key");
             }
+        }
+    }
+}
+
+mod boss_fights {
+    use crate::fight::{Fight, Hurt, MAX_HEARTS};
+    use crate::levels::LEVELS;
+    use crate::program::{simulate, Program};
+    use crate::world::World;
+
+    fn mossback() -> Fight {
+        Fight::new(LEVELS.iter().find_map(|l| l.boss).unwrap())
+    }
+
+    #[test]
+    fn a_hurt_run_costs_half_a_heart_once() {
+        let mut f = mossback();
+        assert_eq!(f.hearts, MAX_HEARTS);
+        f.start_run();
+        assert_eq!(f.hurt(), Hurt::Heart);
+        assert_eq!(f.hurt(), Hurt::Already);
+        assert_eq!(f.hearts, MAX_HEARTS - 1);
+    }
+
+    #[test]
+    fn knocked_out_retries_the_same_stage_with_full_hearts() {
+        let mut f = mossback();
+        f.clear_stage();
+        for i in 1..MAX_HEARTS {
+            f.start_run();
+            assert_eq!(f.hurt(), Hurt::Heart, "mistake {i}");
+        }
+        f.start_run();
+        assert_eq!(f.hurt(), Hurt::KnockedOut);
+        f.get_up();
+        assert_eq!((f.stage, f.hearts, f.lost), (1, MAX_HEARTS, u32::from(MAX_HEARTS)));
+    }
+
+    #[test]
+    fn each_stage_takes_a_third_and_stars_follow_hearts_lost() {
+        let mut f = mossback();
+        assert_eq!(f.boss_health(), 3);
+        assert!(!f.clear_stage() && f.boss_health() == 2);
+        assert!(!f.clear_stage() && f.boss_health() == 1);
+        assert!(f.clear_stage() && f.boss_health() == 0);
+        for (lost, stars) in [(0, 3), (2, 3), (3, 2), (5, 2), (6, 1), (20, 1)] {
+            f.lost = lost;
+            assert_eq!(f.stars(), stars, "{lost} half-hearts lost");
+        }
+    }
+
+    /// Every boss can be beaten by playing its stages' solutions in order.
+    #[test]
+    fn every_boss_can_be_defeated() {
+        for boss in LEVELS.iter().filter_map(|l| l.boss) {
+            let mut f = Fight::new(boss);
+            while !f.defeated() {
+                let l = f.level();
+                let p = Program::deserialize(l.solution).unwrap();
+                assert!(simulate(&p, World::from_level(l, 1)).is_ok(), "{}", l.name);
+                f.clear_stage();
+            }
+            assert_eq!(f.stars(), 3);
         }
     }
 }
