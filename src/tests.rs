@@ -1823,7 +1823,7 @@ mod menu_layouts {
         eq(s.panel, (380.0, 84.0, 880.0, 660.0));
         eq(s.tile_rect(0), (410.0, 164.0, 148.0, 148.0));
         eq(s.tile_rect(14), (1082.0, 524.0, 148.0, 148.0));
-        assert_eq!(s.player_x, 640.0);
+        eq(s.player, (630.0, 8.0, 300.0, 64.0));
 
         let k = layout::check(c, Answer::Text, 3, true, true);
         eq(k.back, (16.0, 12.0, 130.0, 40.0));
@@ -1892,7 +1892,10 @@ mod menu_layouts {
                     no_overlaps(name, "level tiles", &all);
                     let mut worlds = s.worlds.clone();
                     worlds.push(s.back);
+                    worlds.push(s.player);
                     no_overlaps(name, "worlds", &worlds);
+                    // Clear of the star count, which starts 114 from the right.
+                    assert!(inside(s.player, c) && s.player.x + s.player.w <= c.0 - 114.0, "{name}: player {:?}", s.player);
                     if !tiny {
                         assert!(s.tile >= 100.0, "{name}: {tiles} tiles are {}px", s.tile);
                         assert!(s.worlds.iter().all(|r| r.h >= 80.0), "{name}: worlds too short");
@@ -1907,6 +1910,9 @@ mod menu_layouts {
                     let mut side = s.worlds.clone();
                     side.push(s.panel);
                     side.push(s.back);
+                    side.push(s.player);
+                    // Clear of the star count, which starts 228 from the right.
+                    assert!(s.player.x + s.player.w <= c.0 - 228.0 && s.player.w >= 180.0, "{name}: player {:?}", s.player);
                     for r in &side {
                         assert!(inside(*r, c), "{name}: off screen {r:?}");
                     }
@@ -1980,13 +1986,18 @@ mod menu_layouts {
 }
 
 mod boss_fights {
-    use crate::fight::{Fight, Hurt, MAX_HEARTS};
-    use crate::levels::LEVELS;
+    use crate::fight::{Cause, Fight, Hurt, MAX_HEARTS};
+    use crate::items::{protection, Look, Protection, Slot, ITEMS};
+    use crate::levels::{Boss, LEVELS};
     use crate::program::{simulate, Program};
     use crate::world::World;
 
+    fn first_boss() -> &'static Boss {
+        LEVELS.iter().find_map(|l| l.boss).unwrap()
+    }
+
     fn mossback() -> Fight {
-        Fight::new(LEVELS.iter().find_map(|l| l.boss).unwrap())
+        Fight::new(first_boss(), Protection::default())
     }
 
     #[test]
@@ -1994,8 +2005,8 @@ mod boss_fights {
         let mut f = mossback();
         assert_eq!(f.hearts, MAX_HEARTS);
         f.start_run();
-        assert_eq!(f.hurt(), Hurt::Heart);
-        assert_eq!(f.hurt(), Hurt::Already);
+        assert_eq!(f.hurt(Cause::Other), Hurt::Heart);
+        assert_eq!(f.hurt(Cause::Other), Hurt::Already);
         assert_eq!(f.hearts, MAX_HEARTS - 1);
     }
 
@@ -2005,10 +2016,10 @@ mod boss_fights {
         f.clear_stage();
         for i in 1..MAX_HEARTS {
             f.start_run();
-            assert_eq!(f.hurt(), Hurt::Heart, "mistake {i}");
+            assert_eq!(f.hurt(Cause::Other), Hurt::Heart, "mistake {i}");
         }
         f.start_run();
-        assert_eq!(f.hurt(), Hurt::KnockedOut);
+        assert_eq!(f.hurt(Cause::Other), Hurt::KnockedOut);
         f.get_up();
         assert_eq!((f.stage, f.hearts, f.lost), (1, MAX_HEARTS, u32::from(MAX_HEARTS)));
     }
@@ -2026,11 +2037,80 @@ mod boss_fights {
         }
     }
 
+    #[test]
+    fn armor_blocks_mistakes_before_hearts() {
+        // Iron: 2 armor points, and half a heart back after each stage.
+        let mut f = Fight::new(first_boss(), protection("iron"));
+        for _ in 0..2 {
+            f.start_run();
+            assert_eq!(f.hurt(Cause::Other), Hurt::Blocked);
+        }
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Other), Hurt::Heart);
+        assert_eq!((f.armor, f.hearts, f.lost), (0, MAX_HEARTS - 1, 1));
+        // Clearing a stage gives half a heart back, never above full.
+        f.clear_stage();
+        assert_eq!(f.hearts, MAX_HEARTS);
+        f.clear_stage();
+        assert_eq!(f.hearts, MAX_HEARTS);
+        // Blocked mistakes don't cost stars.
+        assert_eq!(f.stars(), 3);
+    }
+
+    #[test]
+    fn the_rarest_armor_makes_lava_and_water_harmless() {
+        let mut f = Fight::new(first_boss(), protection("netherite"));
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Lava), Hurt::Immune);
+        f.start_run();
+        assert_eq!(f.hurt(Cause::Water), Hurt::Blocked, "netherite doesn't stop water");
+        let mut g = Fight::new(first_boss(), protection("superstar"));
+        g.start_run();
+        assert_eq!(g.hurt(Cause::Water), Hurt::Immune);
+        assert_eq!((g.armor, g.hearts), (4, MAX_HEARTS));
+    }
+
+    #[test]
+    fn used_armor_stays_used_after_a_knockout() {
+        let mut f = Fight::new(first_boss(), protection("leather"));
+        for _ in 0..=MAX_HEARTS {
+            f.start_run();
+            f.hurt(Cause::Other);
+        }
+        assert_eq!(f.hearts, 0, "1 blocked, then every half heart");
+        f.get_up();
+        assert_eq!((f.hearts, f.armor), (MAX_HEARTS, 0));
+    }
+
+    /// Rarer armor never protects less, and even the best can't come close to
+    /// making the miner invulnerable. Shirts and tools don't protect.
+    #[test]
+    fn rarer_armor_protects_more_but_never_too_much() {
+        let mut armor: Vec<_> = ITEMS.iter().filter(|i| i.slot == Slot::Armor).collect();
+        armor.sort_by_key(|i| i.stars);
+        let mut last = Protection::default();
+        for item in armor {
+            let p = protection(item.key);
+            assert!(p.points >= 1, "{}: armor should protect", item.name);
+            assert!(p.points >= last.points && p.heal >= last.heal, "{}: protects less than the armor before it", item.name);
+            assert!(p.points <= 4 && p.heal <= 2, "{}: too strong", item.name);
+            last = p;
+        }
+        for item in ITEMS.iter().filter(|i| i.slot != Slot::Armor) {
+            assert_eq!(protection(item.key), Protection::default(), "{}", item.name);
+        }
+        // Only worn armor counts.
+        let mut look = Look::plain(0);
+        assert_eq!(look.protection(), Protection::default());
+        look.outfit.wear(ITEMS.iter().position(|i| i.key == "iron").unwrap());
+        assert_eq!(look.protection(), protection("iron"));
+    }
+
     /// Every boss can be beaten by playing its stages' solutions in order.
     #[test]
     fn every_boss_can_be_defeated() {
         for boss in LEVELS.iter().filter_map(|l| l.boss) {
-            let mut f = Fight::new(boss);
+            let mut f = Fight::new(boss, Protection::default());
             while !f.defeated() {
                 let l = f.level();
                 let p = Program::deserialize(l.solution).unwrap();
@@ -2040,4 +2120,150 @@ mod boss_fights {
             assert_eq!(f.stars(), 3);
         }
     }
+}
+
+/// Stars unlock the Wardrobe's items, and cooler items need more of them.
+mod wardrobe {
+    use crate::items::*;
+
+    fn find(key: &str) -> usize {
+        ITEMS.iter().position(|i| i.key == key).unwrap_or_else(|| panic!("no item {key}"))
+    }
+
+    #[test]
+    fn items_unlock_in_order_up_to_every_star() {
+        let keys: std::collections::HashSet<_> = ITEMS.iter().map(|i| i.key).collect();
+        assert_eq!(keys.len(), ITEMS.len(), "item keys must be unique (they are save keys)");
+        assert!(ITEMS.iter().all(|i| !i.key.is_empty() && !i.key.contains([',', ';', ' '])));
+        assert_eq!(CLASSIC, crate::art::SHIRTS.len());
+        for (i, it) in ITEMS.iter().enumerate() {
+            assert_eq!(i < CLASSIC, it.stars == 0, "{}: only the classic shirts are free", it.name);
+            assert!(i >= CLASSIC || it.slot == Slot::Shirt);
+        }
+        for slot in SLOTS {
+            let stars: Vec<u32> = in_slot(slot).filter(|&i| i >= CLASSIC).map(|i| ITEMS[i].stars).collect();
+            assert!(stars.windows(2).all(|w| w[0] < w[1]), "{slot:?}: each item needs more stars than the last: {stars:?}");
+            assert_eq!(stars.first(), Some(&10), "{slot:?}: one of each kind unlocks at 10 stars");
+        }
+        assert!(ITEMS.iter().all(|i| i.stars <= max_stars()));
+        assert_eq!(ITEMS.iter().map(|i| i.stars).max(), Some(max_stars()), "the best item needs every star");
+    }
+
+    #[test]
+    fn outfits_save_and_hide_items_not_yet_earned() {
+        let mut o = Outfit::default();
+        for key in ["iron", "torch", "plaid", "gold"] {
+            o.wear(find(key));
+        }
+        assert_eq!(o.get(Slot::Armor), Some(find("gold")), "gold armor replaces iron");
+        assert_eq!(Outfit::parse(&o.serialize()), o);
+        let mut torch = Outfit::default();
+        torch.wear(find("torch"));
+        assert_eq!(Outfit::parse("nope, torch ,"), torch);
+        let earned = o.unlocked(35);
+        assert_eq!((earned.get(Slot::Shirt), earned.get(Slot::Armor), earned.get(Slot::Tool)), (Some(find("plaid")), None, Some(find("torch"))));
+        o.take_off(Slot::Tool);
+        assert_eq!(o.get(Slot::Tool), None);
+
+        // A classic shirt changes the body's color; other items are drawn on top.
+        let mut look = Look::plain(3);
+        assert_eq!(look.base_shirt(), 3);
+        look.outfit.wear(find("blue"));
+        assert_eq!((look.base_shirt(), look.extras().count()), (6, 0));
+        look.outfit.wear(find("stripes"));
+        assert_eq!(look.base_shirt(), 3);
+        assert_eq!(look.extras().collect::<Vec<_>>(), [find("stripes")]);
+    }
+
+    #[test]
+    fn every_item_has_art_of_its_kind() {
+        use crate::art::outfits::design;
+        for (i, it) in ITEMS.iter().enumerate() {
+            match design(it.key) {
+                Some(d) => assert_eq!(d.slot(), it.slot, "{}", it.name),
+                None => assert!(i < CLASSIC, "{} has no art", it.name),
+            }
+        }
+        assert!(ITEMS[..CLASSIC].iter().all(|it| design(it.key).is_none()), "classic shirts are body colors");
+    }
+
+    #[test]
+    fn wardrobe_fits_every_screen() {
+        use crate::layout::wardrobe;
+        let inside = |r: macroquad::math::Rect, c: (f32, f32)| r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= c.0 + 0.01 && r.y + r.h <= c.1 + 0.01;
+        use crate::wardrobe::{cards, max_cards};
+        assert!(SLOTS.iter().all(|&s| cards(s).len() <= max_cards()));
+        for &(name, sw, sh) in crate::layout::SAMPLE_SCREENS {
+            let (w, h, _) = crate::layout::canvas(sw, sh);
+            let c = (w, h);
+            let l = wardrobe(c, SLOTS.len(), max_cards());
+            let cards: Vec<_> = (0..max_cards()).map(|n| l.card_rect(n)).collect();
+            let mut all = vec![l.back, l.preview, l.info];
+            all.extend(&l.tabs);
+            for r in all.iter().chain(&cards) {
+                assert!(inside(*r, c), "{name}: off screen {r:?}");
+            }
+            for (i, a) in all.iter().chain(&cards).enumerate() {
+                for b in all.iter().chain(&cards).skip(i + 1) {
+                    assert!(!a.overlaps(b), "{name}: {a:?} overlaps {b:?}");
+                }
+            }
+            assert!(!l.title.overlaps(&l.back) && l.title.w >= 120.0, "{name}: no room for the title {:?}", l.title);
+            if sw >= 360.0 {
+                assert!(l.card.0 >= 80.0, "{name}: cards are {}px", l.card.0);
+                assert!(l.tabs.iter().all(|t| t.h >= 44.0 && t.w >= 90.0), "{name}: tabs too small");
+            }
+        }
+    }
+
+    #[test]
+    fn wins_announce_what_they_unlocked() {
+        let names = |a, b| newly_unlocked(a, b).iter().map(|&i| ITEMS[i].name).collect::<Vec<_>>();
+        assert_eq!(names(8, 11), ["Sailor Stripes", "Leather Armor", "Torch"]);
+        assert!(names(11, 13).is_empty());
+        assert_eq!(names(57, 60), ["Gold Armor"]);
+        assert_eq!(next_unlock(60).map(|i| ITEMS[i].name), Some("Galaxy Shirt"));
+        assert_eq!(next_unlock(max_stars()), None);
+    }
+}
+
+#[test]
+fn outfits_are_saved_merged_and_survive_starting_over() {
+    use crate::items::{Look, Slot, ITEMS};
+    use crate::save::{Progress, Users};
+    let _guard = SAVE_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("block-coders-outfit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
+    let find = |k: &str| ITEMS.iter().position(|i| i.key == k).unwrap();
+
+    let ana = Users::load().add("Ana", 1).unwrap();
+    let mut p = Progress::load(ana);
+    p.stars.iter_mut().take(20).for_each(|s| *s = 3);
+    p.outfit.wear(find("gold"));
+    p.save();
+    let stored = Progress::load(ana);
+    assert_eq!(stored.outfit.get(Slot::Armor), Some(find("gold")));
+    assert_eq!(stored.look(1).outfit.get(Slot::Armor), Some(find("gold")));
+
+    // Two tabs: one changes the outfit, the other wins a level. Neither undoes the other.
+    let mut tab1 = Progress::load(ana);
+    let mut tab2 = Progress::load(ana);
+    tab1.outfit.wear(find("torch"));
+    tab1.save();
+    tab2.stars[30] = 2;
+    tab2.save();
+    let both = Progress::load(ana);
+    assert_eq!((both.outfit.get(Slot::Tool), both.stars[30]), (Some(find("torch")), 2));
+    // Older versions split lines in three and skip this one.
+    let text = std::fs::read_to_string(dir.join("block-coders").join(format!("user-{ana}.txt"))).unwrap();
+    assert!(text.lines().any(|l| l == "look;gold,torch"), "{text}");
+
+    // Starting over keeps the outfit, hidden until the stars are earned again.
+    Progress::load(ana).reset();
+    let fresh = Progress::load(ana);
+    assert_eq!(fresh.total_stars(), 0);
+    assert_eq!(fresh.outfit.get(Slot::Armor), Some(find("gold")));
+    assert_eq!(fresh.look(1), Look::plain(1));
+    let _ = std::fs::remove_dir_all(&dir);
 }

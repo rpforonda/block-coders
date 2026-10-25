@@ -65,7 +65,9 @@ like real software.
   stages. Kids break the boss's glowing crystals using the world's idea, and
   each cleared stage knocks a third off its health bar. The miner has 5 hearts:
   a run where it gets hurt costs half a heart, and testing a program that just
-  stops early is free.
+  stops early is free. Armor from the Wardrobe protects: rarer armor blocks
+  more mistakes, gives hearts back between stages, and the rarest makes lava
+  harmless.
 - **World Checks.** At the end of each world, a 10-question check asks kids to
   read short programs and work out what they do. 8 right (75%) opens the next
   world, and retries are unlimited, with mostly new questions each time. Each
@@ -82,6 +84,10 @@ like real software.
 - **Up to 6 players.** Each player has their own name, a miner with their own
   shirt color, and their own saved progress. Any player can *start over* from
   level 1.
+- **The Wardrobe.** Stars unlock new shirts, armor and tools for your miner,
+  from Sailor Stripes, Leather Armor and a Torch at 10 stars up to Superstar
+  Armor for all 216. Stars are never spent. Click your miner on the level
+  select to dress up.
 - **Readable on phones.** On a small screen every screen reshapes instead of
   shrinking. Upright, the play screen stacks the world, Bit, then the blocks
   and the program, with RUN along the bottom; the level select shows a list of

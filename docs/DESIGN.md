@@ -21,6 +21,7 @@ installing, see the [README](../README.md).
    - [The guided tour](#the-guided-tour)
 9. [Presentation](#presentation)
 10. [Players and saving](#players-and-saving)
+    - [The Wardrobe](#the-wardrobe)
 11. [Packaging](#packaging)
 12. [Testing](#testing)
 13. [Key decisions](#key-decisions)
@@ -77,28 +78,30 @@ flowchart TD
     levels["levels.rs<br/>72 levels and<br/>6 boss fights as data"]
     fight["fight.rs<br/>boss fights: hearts,<br/>boss health, stars"]
     save["save.rs<br/>players + progress files"]
+    wardrobe["items.rs / wardrobe.rs<br/>Wardrobe items + screen"]
     art["art.rs / sound.rs<br/>procedural pixel art + sfx"]
     ui["ui.rs<br/>buttons, text, panels"]
 
-    main --> users & play & save
+    main --> users & play & save & wardrobe
+    wardrobe --> save
     play --> editor & program & world & levels & save & fight
     fight --> levels
     editor --> program
     program --> world
     world --> levels
     users --> save
-    play & editor & users & main --> ui & art
+    play & editor & users & main & wardrobe --> ui & art
 ```
 
-The **logic layer** (`world`, `program`, `levels`, `fight`, `save`) doesn't draw anything.
+The **logic layer** (`world`, `program`, `levels`, `fight`, `save`, `items`) doesn't draw anything.
 That lets the tests and the in-game "try other worlds" check run whole programs
 instantly with `program::simulate`. The **presentation layer** (`play`, `editor`,
-`users`, `main`, `ui`, `art`, `sound`) uses an immediate-mode style: every frame
+`users`, `wardrobe`, `main`, `ui`, `art`, `sound`) uses an immediate-mode style: every frame
 it reads input, updates, and redraws from the current state.
 
 ### Screens and the frame loop
 
-`main.rs` holds a `Screen` enum (`Title`, `Users`, `Select`, `Play`). Each
+`main.rs` holds a `Screen` enum (`Title`, `Users`, `Select`, `Play`, `Check`, `Wardrobe`). Each
 frame:
 
 1. It computes a scale factor and sets a camera, so all drawing happens in a
@@ -340,9 +343,31 @@ solution), in an arena around the boss.
   the level ends the fight, and the next visit starts it again.
 - **Stars** come from the hearts lost in the whole fight: 3 for at most 1
   heart, 2 for at most half of them, otherwise 1.
+- **Armor.** The armor worn in the [Wardrobe](#the-wardrobe) protects in boss
+  fights (`items::protection`). Each armor point blocks one mistake before any
+  hearts are lost ("Armor saved you!"), shown as chestplates above the hearts.
+  Rarer armor gives hearts back after each cleared stage, and the rarest makes
+  lava (and then water) harmless ("Lava can't hurt you!"). Armor is repaired
+  after each fight; points used before a knockout stay used. Mistakes the armor
+  blocked don't cost stars. A fight's intro says what the worn armor does, or
+  tips that stars unlock armor, and the Wardrobe says what each armor does.
+
+| Armor | Stars | Armor points | Hearts back after each stage | Harmless |
+|---|---|---|---|---|
+| Leather | 10 | 1 | | |
+| Chainmail | 20 | 2 | | |
+| Iron | 40 | 2 | half | |
+| Gold | 60 | 3 | half | |
+| Diamond | 110 | 3 | 1 | |
+| Netherite | 150 | 4 | 1 | lava |
+| Superstar | 216 | 4 | 1 | lava, water |
+
+  Even the best armor blocks only 4 mistakes and gives back 2 hearts over a
+  fight, so the miner can still be knocked out (a test checks the ladder never
+  goes past that, and that rarer armor never protects less).
 - `fight.rs` holds these rules (`Fight`) and draws nothing, so tests can play
   whole fights. `play.rs` draws the boss over its squares, the health bar
-  across the top of the world, and the hearts along the bottom.
+  across the top of the world, and the hearts (and armor) along the bottom.
 
 | World | Boss | Stage 1 | Stage 2 | Stage 3 |
 |---|---|---|---|---|
@@ -615,7 +640,10 @@ frame, which locked kids out of the MAIN tab after an error inside the function.
   function of (x, y): hashed noise for grass and stone, sine patterns for
   animated water, lava and portal frames, and ASCII pixel-art for the miner,
   Bit, the pickaxe and the app icon. The miner is generated in eight shirt
-  colors, one per player choice.
+  colors, one per player choice. Wardrobe items (`art/outfits.rs`) are drawn
+  in layers over it: patterned shirts and armor are see-through overlays
+  built from the miner's own pixel rows, so they line up in every facing, and
+  tools are small sprites held in the hand. Glows and sparkles are drawn live.
 - **Procedural sound** (`sound.rs`). Square, triangle and noise waves with a
   short fade-in/out are written into in-memory WAV files at startup.
 - **Animation.** Each action makes an `Anim` (move, turn, mine, place, bump,
@@ -632,6 +660,7 @@ Files live in `$XDG_DATA_HOME/block-coders/` (usually
 users.txt        id;shirt;name           one line per player
                  next;<id>               the next id to hand out (ids are never reused)
 user-<id>.txt    gen;<n>                 how many times this player started over
+                 look;<item keys>        what they wear in the Wardrobe (older versions skip it)
                  level name;stars;program  one line per level
                  check:<n>;<passed 0/1>;<last question ids>  one line per World Check
 ```
@@ -670,6 +699,52 @@ user-<id>.txt    gen;<n>                 how many times this player started over
   read-merge-write isn't atomic, but it runs in one go on each save, so two
   tabs would have to save in the same instant to collide.
 
+### The Wardrobe
+
+Stars unlock shirts, armor and tools for the miner (`items.rs`). Kids open it
+from the level select by clicking their own miner and name. Armor also
+protects in boss fights (see [Boss fights](#boss-fights)).
+
+- **Stars are never spent.** An item unlocks once the player's total reaches
+  its number, so the star count still says how well they code, and nothing
+  earned can be lost.
+- **Cooler items need more stars.** One of each kind unlocks at 10 stars, then
+  something about every 10 stars up to 60, then the gaps widen. The best item
+  needs all 216, which is three stars on every level. Tests keep each kind's
+  items in order and the last one at every star.
+
+  | Stars | Shirts | Armor | Tools |
+  |---|---|---|---|
+  | 0 | 8 classic colors | | |
+  | 10 | Sailor Stripes | Leather Armor | Torch (glows) |
+  | 20 | | Chainmail | |
+  | 25 | | | Lantern (glows) |
+  | 30 | Lumberjack Plaid | | |
+  | 40 | | Iron Armor | |
+  | 50 | | | Golden Pickaxe |
+  | 60 | | Gold Armor | |
+  | 75 | Galaxy Shirt (twinkles) | | |
+  | 90 | | | Diamond Pickaxe (sparkles) |
+  | 110 | | Diamond Armor | |
+  | 130 | | | Magic Wand (sparkles) |
+  | 150 | | Netherite Armor (glints) | |
+  | 170 | Rainbow Shirt (animated) | | |
+  | 185 | | | Crystal Staff (glows) |
+  | 216 | | Superstar Armor (golden glow) | |
+
+- **Locked items show** dimmed, with the stars they need. The line under the
+  grid says how many more stars that is, or what unlocks next.
+- **Each card shows the miner** in their shirt with just that item on, so the
+  item is easy to see. The preview turns the miner around in the full outfit.
+- **Saving.** The outfit is the `look;` line in the player's file, saved by
+  item key (like levels, so items can be reordered). Two tabs merge it like
+  programs: one tab's change wins over a tab that didn't change it.
+- **After "Start over"** the outfit stays chosen, but items the player no
+  longer has the stars for are drawn plain (`Outfit::unlocked`) until they're
+  earned again. Ctrl+U, which opens every level, also opens every item.
+- **News.** A win that crosses an item's number says so in the victory popup
+  ("New in your Wardrobe: Iron Armor!").
+
 ## Packaging
 
 `packaging/make-package.sh` runs the tests, builds the release binary (with
@@ -705,10 +780,20 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `boss_fights::knocked_out_retries_the_same_stage_with_full_hearts` | At zero hearts: full hearts, the same stage, cleared stages kept |
 | `boss_fights::each_stage_takes_a_third_and_stars_follow_hearts_lost` | Boss health in thirds, and the star thresholds |
 | `boss_fights::every_boss_can_be_defeated` | Playing each stage's solution in order defeats every boss |
+| `boss_fights::armor_blocks_mistakes_before_hearts` | Armor points block mistakes before hearts, hearts come back after a stage (never above full), and blocked mistakes don't cost stars |
+| `boss_fights::the_rarest_armor_makes_lava_and_water_harmless` | Netherite makes lava harmless (not water); Superstar makes both harmless |
+| `boss_fights::used_armor_stays_used_after_a_knockout` | A knockout refills hearts, not armor |
+| `boss_fights::rarer_armor_protects_more_but_never_too_much` | Rarer armor never protects less, never more than 4 points or a heart back per stage, and shirts and tools don't protect |
 | `maps_are_well_formed` | Rectangular maps, exactly one start, fits the screen |
 | `serialize_round_trips` | The save format round-trips |
 | `editor::tests::*` | Moving blocks: reordering, into/out of containers and else parts, between tabs, with children, and unique ids afterwards |
 | `players_can_be_created_reset_and_deleted` | Player files, legacy migration, unlock rules |
+| `wardrobe::items_unlock_in_order_up_to_every_star` | Unique item keys, only the classic shirts are free, each kind's items need more stars than the last, one of each kind at 10, the best needs all 216 |
+| `wardrobe::outfits_save_and_hide_items_not_yet_earned` | Outfits round-trip, unknown keys are skipped, locked items are hidden, classic shirts recolor the body |
+| `wardrobe::wins_announce_what_they_unlocked` | Which items a win unlocks, and which is next |
+| `wardrobe::every_item_has_art_of_its_kind` | Every item has art for its slot |
+| `wardrobe::wardrobe_fits_every_screen` | The Wardrobe on every test screen: on screen, no overlaps, tabs and cards big enough to tap |
+| `outfits_are_saved_merged_and_survive_starting_over` | Outfits are saved, two tabs don't undo each other, older versions skip the line, "Start over" hides but keeps the outfit |
 | `read_only_saves_never_change` | While the autopilot's read-only switch is on, adding, deleting or resetting players changes nothing on disk |
 | `a_stale_tab_keeps_other_tabs_players` | A tab that loaded the player list earlier never drops or overwrites players another tab added, and respects names and the 6-player limit they took |
 | `a_stale_tab_never_overwrites_newer_progress` | A tab playing the same player as another never erases its stars or checks, undoes its "Start over", or writes a deleted player back or into a new player |
@@ -767,10 +852,22 @@ screenshots don't show real players' names.
 | Strict rules (mining air fails, placing on floor walls you in) | Forgiving rules | Without them, random levels could be solved without conditionals. |
 | Win-on-arrival | Win only when the program ends | Feels better ("I made it!") and avoids "why didn't it win?" confusion. Levels work around the overshoot loophole (rule 6). |
 | Boss fights in 3 stages: break the boss's crystals using the world's idea; each stage takes a third of its health | One big puzzle level per world; a boss creature with new rules and attacks | The owner asked for combat in 3 stages that each take a third of the boss's health, and a Minecraft-like heart meter. TypeSafe chose reworking #24 into fights, with armor in a second PR (0.80); half a heart for a run where the miner gets hurt, but nothing for a program that just stops early (0.96); 5 hearts (0.69, against 0.27 for 3 and 0.05 for 10); retrying the current stage at zero hearts (0.74); stars from hearts lost (0.83); and the bosses Mossback, Echo Bat, Thornroot, Dune Scorpion, The Gloom and Abacus Golem (0.64). Before that: a red banner on the tile (0.69), and opening a world's first level with its world so bosses never lock out old saves (0.79). Wording: "Oof! You ran out of hearts..." (0.47), "Ouch!" (0.49), and "... lost a third of its health. 2 more stages to go!" (0.53). |
+| The Wardrobe's armor protects in boss fights, more as it gets rarer | Armor crafted from diamonds and emeralds (4 pieces x 4 tiers); crafted armor beside the Wardrobe's; asking first | The owner asked for hearts tied to worn armor that adds durability, with rarer armor giving more. Crafting was chosen first (0.53), before the Wardrobe (#25) existed; with it, TypeSafe chose making its armor protect (0.54, against 0.42 for asking and 0.05 for two armor systems). Armor points that block mistakes, repaired after each fight (0.81); points used before a knockout stay used (0.68); the ladder in Boss fights (0.69); "Armor saved you!" (0.39) and "Lava can't hurt you!" (0.42); and the intro saying what the worn armor does (0.97). |
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |
 | A world's World Check can be taken as soon as the world opens; passing opens the next world's first level | Only after the world's last level; any check at any time; also opening the rest of this world, or the whole next world | The owner asked for kids to take the assessment ahead of time to unlock levels. TypeSafe chose taking a check once its world is open (0.96, against 0.03 after the intro level and 0.01 any time) and opening only the next world's first level (0.55, against 0.29 for this world's levels too and 0.16 for the whole next world), so skipped levels follow the usual rule. Wording: "You haven't finished this world's levels yet, and that's OK!" in the intro (0.62), "You can take it before finishing the levels!" on the tile (0.45), and "the levels in this world teach everything on the check" after not passing (0.40). |
+
+| Stars unlock Wardrobe items and are never spent | Stars as a currency | The star count keeps meaning "how well you've coded", and nothing earned can be lost. TypeSafe: 0.98. |
+| Shirts, armor and a held tool | Also hats and glow effects as their own slots; capes too | The three kinds the request named. Helmets come with armor, and glows come with the top items. TypeSafe: 0.47 (five slots 0.37, six 0.16). |
+| Tools, not weapons | Swords and tools; only swords | The miner never fights, it mines and builds. TypeSafe: 0.97. A sword would be one more item and its art. |
+| Front-loaded unlocks | Evenly spaced; mostly over 100 stars | Early unlocks keep beginners going, and the best items still need most of the 216 stars. TypeSafe: 0.95. |
+| Items drawn as layers over the miner | One combined texture per outfit | Nothing to rebuild or cache when an outfit changes, and animated items just pick a frame. TypeSafe: 0.74. |
+| The level select's miner and name open the Wardrobe | A button on each player card | The star count is right beside it. TypeSafe: 0.51 (0.49). |
+| Called "Wardrobe" | Locker, Star Shop, Marketplace | Nothing is bought. TypeSafe: 0.41 (Locker 0.32, Star Shop 0.25, Marketplace 0.03). |
+| The outfit is saved in the player's progress file | A line in `users.txt` | It merges between tabs like programs, and survives "Start over". TypeSafe: 0.72. |
+| After "Start over", locked items are hidden, not removed | Clearing the outfit | They come back as the stars are earned again. TypeSafe: 0.74. |
+| Unlocks are announced in the victory popup | A "NEW" badge on the button; no notice | No extra saved state, and the news comes the moment it's earned. TypeSafe: 0.49 (badge 0.48). |
 
 ## Limitations and future work
 

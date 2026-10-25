@@ -5,6 +5,7 @@ mod check;
 mod editor;
 mod fight;
 mod hints;
+mod items;
 mod keyboard;
 mod layout;
 mod levels;
@@ -16,6 +17,7 @@ mod sound;
 mod tour;
 mod ui;
 mod users;
+mod wardrobe;
 mod world;
 #[cfg(test)]
 mod tests;
@@ -30,6 +32,8 @@ use sound::{Sfx, Sounds};
 use layout::Canvas;
 use ui::*;
 use users::{UsersOut, UsersScreen};
+use wardrobe::{Wardrobe, WardrobeOut};
+use items::Look;
 use world::{Dir, Floor};
 
 /// The window size: the desktop canvas, or BC_WINDOW's size in debug builds.
@@ -76,11 +80,13 @@ enum Screen {
     Select,
     Play(Box<Play>),
     Check(Box<CheckScreen>),
+    Wardrobe(Wardrobe),
 }
 
 /// What the level select screen asks for.
 enum SelectOut {
     Back,
+    Wardrobe,
     Level(usize),
     Check(usize),
 }
@@ -336,8 +342,10 @@ fn select_screen(
                 sfx.play(Sfx::Click);
                 out = Some(SelectOut::Back);
             }
-            draw_tex(art.player(user.shirt, Dir::Down), l.back.x + l.back.w + 16.0, 8.0, 33.0, 44.0, WHITE);
-            shadow_text(&user.name, l.back.x + l.back.w + 56.0, 18.0, fit_size(&user.name, c.0 - l.back.w - 170.0, 26.0, 16.0), rgb8(120, 230, 220));
+            if player_chip(ui, art, &progress.look(user.shirt), &user.name, l.player) {
+                sfx.play(Sfx::Click);
+                out = Some(SelectOut::Wardrobe);
+            }
             star(c.0 - 100.0, 32.0, 14.0, true);
             shadow_text(&format!("{total}"), c.0 - 80.0, 20.0, 24.0, rgb8(255, 215, 40));
             shadow_text("Choose a world", 12.0, 66.0, 32.0, WHITE);
@@ -387,9 +395,11 @@ fn select_screen(
         sfx.play(Sfx::Click);
         out = Some(SelectOut::Back);
     }
-    shadow_text("Choose a level", 214.0, 16.0, 44.0, WHITE);
-    draw_tex(art.player(user.shirt, Dir::Down), l.player_x, 14.0, 36.0, 48.0, WHITE);
-    shadow_text(&user.name, l.player_x + 46.0, 24.0, 30.0, rgb8(120, 230, 220));
+    shadow_text("Choose a level", 214.0, 16.0, fit_size("Choose a level", l.player.x - 226.0, 44.0, 26.0), WHITE);
+    if player_chip(ui, art, &progress.look(user.shirt), &user.name, l.player) {
+        sfx.play(Sfx::Click);
+        out = Some(SelectOut::Wardrobe);
+    }
     star(c.0 - 210.0, 38.0, 18.0, true);
     shadow_text(&format!("{total} / {}", LEVELS.len() * 3), c.0 - 184.0, 24.0, 30.0, rgb8(255, 215, 40));
 
@@ -431,6 +441,22 @@ fn select_screen(
     let info = level_info(hovered, check_info);
     text_centered(&info, l.info, fit_size(&info, l.info.w - 24.0, 24.0, 16.0), WHITE, true);
     out
+}
+
+/// The player's miner and name, as a button to the Wardrobe.
+fn player_chip(ui: &mut Ui, art: &Art, look: &Look, name: &str, r: Rect) -> bool {
+    let hover = ui.hover(r);
+    draw_rectangle(r.x, r.y, r.w, r.h, if hover { Color::new(1.0, 1.0, 1.0, 0.16) } else { Color::new(0.0, 0.0, 0.0, 0.35) });
+    draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, rgb8(255, 215, 40));
+    let mh = r.h - 12.0;
+    art.miner(look, Dir::Down, Rect::new(r.x + 10.0, r.y + 6.0, mh * 0.75, mh), WHITE);
+    let x = r.x + mh * 0.75 + 22.0;
+    let w = r.w - (x - r.x) - 8.0;
+    let name_size = fit_size(name, w, r.h * 0.42, 14.0);
+    shadow_text(name, x, r.y + r.h * 0.1, name_size, rgb8(120, 230, 220));
+    let label = "Wardrobe >";
+    shadow_text(label, x, r.y + r.h * 0.58, fit_size(label, w, r.h * 0.3, 12.0), rgb8(255, 215, 40));
+    ui.clicked(r)
 }
 
 fn main() {
@@ -489,6 +515,8 @@ async fn run() {
     let mut levels_page = true;
 
     // BC_CHECK=<n> opens World Check n (0-based) instead of a level.
+    // BC_WARDROBE=<tab> opens the Wardrobe on that tab (0-based) instead.
+    let shot_wardrobe: Option<usize> = dev_env("BC_WARDROBE").and_then(|s| s.parse().ok());
     let shot_check: Option<usize> = dev_env("BC_CHECK").and_then(|s| s.parse().ok()).filter(|&c| c < CHECKS);
     let shot_level: usize = dev_env("BC_LEVEL").and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut frame: u32 = 0;
@@ -586,13 +614,23 @@ async fn run() {
             }
             Screen::Select => {
                 let me = user.clone().unwrap_or(User { id: 0, name: "Guest".into(), shirt: 0 });
+                let look = progress.look(me.shirt);
                 match select_screen(&mut ui, &art, &sfx, &mut progress, &me, &mut world_sel, &mut levels_page, (cw, ch)) {
                     Some(SelectOut::Back) => next = Some(Screen::Users(UsersScreen::new(&mut users))),
+                    Some(SelectOut::Wardrobe) => next = Some(Screen::Wardrobe(Wardrobe::new())),
                     Some(SelectOut::Level(i)) => {
-                        next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, me.shirt))))
+                        next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, look))))
                     }
-                    Some(SelectOut::Check(c)) => next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, me.shirt)))),
+                    Some(SelectOut::Check(c)) => next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, look)))),
                     None => {}
+                }
+            }
+            Screen::Wardrobe(w) => {
+                menu_background(&art, (cw, ch));
+                let me = user.clone().unwrap_or(User { id: 0, name: "Guest".into(), shirt: 0 });
+                match w.frame(&mut ui, &art, &sfx, &mut progress, &me, (cw, ch)) {
+                    WardrobeOut::Stay => {}
+                    WardrobeOut::Back => next = Some(Screen::Select),
                 }
             }
             Screen::Play(p) => match p.frame(&mut ui, &art, &mut sfx, &mut progress, (cw, ch)) {
@@ -604,13 +642,13 @@ async fn run() {
                 }
                 Nav::Goto(i) => {
                     speed = p.speed();
-                    let shirt = user.as_ref().map_or(0, |u| u.shirt);
-                    next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, shirt))));
+                    let look = progress.look(user.as_ref().map_or(0, |u| u.shirt));
+                    next = Some(Screen::Play(Box::new(Play::new(i, progress.programs[i].clone(), speed, look))));
                 }
                 Nav::Check(c) => {
                     speed = p.speed();
-                    let shirt = user.as_ref().map_or(0, |u| u.shirt);
-                    next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, shirt))));
+                    let look = progress.look(user.as_ref().map_or(0, |u| u.shirt));
+                    next = Some(Screen::Check(Box::new(CheckScreen::new(c, &mut progress, look))));
                 }
             },
             Screen::Check(c) => match c.frame(&mut ui, &art, &sfx, &mut progress, (cw, ch)) {
@@ -664,16 +702,18 @@ async fn run() {
                 }
                 30 => {
                     shot("2d-select");
+                    let look = progress.look(4);
                     screen = match shot_check {
+                        _ if shot_wardrobe.is_some() => Screen::Wardrobe(Wardrobe::with_tab(shot_wardrobe.unwrap_or(0))),
                         Some(c) => {
-                            let mut check = CheckScreen::new(c, &mut progress, 4);
+                            let mut check = CheckScreen::new(c, &mut progress, look);
                             // BC_QUESTION=<id> starts the check on that question.
                             if let Some(id) = dev_env("BC_QUESTION") {
                                 check.debug_question(&id);
                             }
                             Screen::Check(Box::new(check))
                         }
-                        None => Screen::Play(Box::new(Play::new(shot_level, None, 2, 4))),
+                        None => Screen::Play(Box::new(Play::new(shot_level, None, 2, look))),
                     };
                 }
                 45 => {
@@ -682,7 +722,7 @@ async fn run() {
                         // BC_TOUR=1 keeps level 1's guided tour up for BC_INPUT to click through.
                         Screen::Play(p) if dev_env("BC_TOUR").is_none() => p.debug_solve(),
                         // A World Check has nothing else to show unless BC_INPUT drives it.
-                        Screen::Check(_) if input_script.is_empty() => break,
+                        Screen::Check(_) | Screen::Wardrobe(_) if input_script.is_empty() => break,
                         _ => {}
                     }
                 }

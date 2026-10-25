@@ -349,7 +349,8 @@ pub fn users(c: Canvas, n: usize) -> UsersLayout {
 /// chosen world's levels in a grid on the right.
 pub struct SelectWide {
     pub back: Rect,
-    pub player_x: f32,
+    /// The player's miner and name, which open the Wardrobe.
+    pub player: Rect,
     pub worlds: Vec<Rect>,
     pub panel: Rect,
     /// Space for the world's name above the grid.
@@ -391,9 +392,11 @@ pub fn select_wide(c: Canvas, worlds: usize, tiles: usize) -> SelectWide {
         by_w.min(by_h).min(148.0)
     };
     let cols = (3..=8).max_by(|&a, &b| size(a).total_cmp(&size(b)).then(a.cmp(&b))).unwrap_or(5);
+    let player_x = (w - 640.0).max(500.0);
     SelectWide {
         back: Rect::new(20.0, 18.0, 170.0, 40.0),
-        player_x: (w - 640.0).max(500.0),
+        // Up to the star count, which starts 228 from the right.
+        player: Rect::new(player_x - 10.0, 8.0, (w - 240.0 - (player_x - 10.0)).min(300.0), 64.0),
         worlds: world_rects,
         panel,
         header_h,
@@ -409,6 +412,8 @@ pub fn select_wide(c: Canvas, worlds: usize, tiles: usize) -> SelectWide {
 /// worlds and then one world's levels.
 pub struct SelectTall {
     pub back: Rect,
+    /// The player's miner and name, which open the Wardrobe.
+    pub player: Rect,
     pub worlds: Vec<Rect>,
     pub tile: f32,
     pub grid_x: f32,
@@ -434,12 +439,84 @@ pub fn select_tall(c: Canvas, worlds: usize, tiles: usize) -> SelectTall {
     let tile = ((w - 2.0 * m - 2.0 * gap) / 3.0).min((h - top - info_h - m - 8.0 - (rows - 1) as f32 * gap) / rows as f32).min(148.0);
     SelectTall {
         back: Rect::new(m, 10.0, 140.0, 44.0),
+        // Up to the star count, which starts 114 from the right.
+        player: Rect::new(m + 148.0, 6.0, w - m - 148.0 - 122.0, 52.0),
         worlds: world_rects,
         tile,
         grid_x: (w - 3.0 * tile - 2.0 * gap) / 2.0,
         grid_y: top,
         gap,
         info: Rect::new(m, h - m - info_h, w - 2.0 * m, info_h),
+    }
+}
+
+/// The Wardrobe: the miner on show, a tab for each kind of item, and that
+/// kind's items in a grid of cards.
+pub struct WardrobeLayout {
+    pub back: Rect,
+    /// Where the title goes, after the back button (left-aligned).
+    pub title: Rect,
+    pub preview: Rect,
+    pub tabs: Vec<Rect>,
+    pub grid: Rect,
+    pub card: (f32, f32),
+    pub cols: usize,
+    pub gap: f32,
+    pub info: Rect,
+}
+
+impl WardrobeLayout {
+    pub fn card_rect(&self, n: usize) -> Rect {
+        let (w, h) = self.card;
+        Rect::new(self.grid.x + (n % self.cols) as f32 * (w + self.gap), self.grid.y + (n / self.cols) as f32 * (h + self.gap), w, h)
+    }
+}
+
+/// `tabs` kinds of item, and up to `cards` cards in one tab.
+pub fn wardrobe(c: Canvas, tabs: usize, cards: usize) -> WardrobeLayout {
+    let (w, h) = c;
+    let tall = is_tall(c);
+    let m = if tall { 12.0 } else { 20.0 };
+    let gap = if tall { 8.0 } else { 14.0 };
+    let back = if tall { Rect::new(m, 10.0, 140.0, 44.0) } else { Rect::new(m, 18.0, 170.0, 40.0) };
+    let right = if tall { 130.0 } else { 240.0 };
+    let title = Rect::new(back.x + back.w + 16.0, back.y, (w - right - back.x - back.w - 16.0).max(0.0), back.h);
+    let (preview, tab_area, info) = if tall {
+        let preview = Rect::new(m, 64.0, w - 2.0 * m, 150.0);
+        let tab_area = Rect::new(m, preview.y + preview.h + 10.0, w - 2.0 * m, 48.0);
+        (preview, tab_area, Rect::new(m, h - m - 44.0, w - 2.0 * m, 44.0))
+    } else {
+        // The preview is as wide as the level select's worlds.
+        let col = if w >= SLIM_W { 330.0 } else { 240.0 };
+        let preview = Rect::new(m, 80.0, col, h - 140.0);
+        let x = preview.x + preview.w + 30.0;
+        (preview, Rect::new(x, 84.0, w - x - m, 52.0), Rect::new(0.0, h - 44.0, w, 30.0))
+    };
+    let tab_w = ((tab_area.w - (tabs.max(1) - 1) as f32 * 10.0) / tabs.max(1) as f32).min(220.0);
+    let tab_rects = (0..tabs).map(|i| Rect::new(tab_area.x + i as f32 * (tab_w + 10.0), tab_area.y, tab_w, tab_area.h)).collect();
+    let top = tab_area.y + tab_area.h + 14.0;
+    let bottom = if tall { info.y - 8.0 } else { h - 60.0 };
+    let area = Rect::new(tab_area.x, top, tab_area.w, bottom - top);
+    // Cards are 5:6. The columns that make them biggest (150 wide at most).
+    let size = |cols: usize| {
+        let rows = cards.max(1).div_ceil(cols);
+        let by_w = (area.w - (cols - 1) as f32 * gap) / cols as f32;
+        let by_h = (area.h - (rows - 1) as f32 * gap) / rows as f32;
+        by_w.min(by_h * 5.0 / 6.0).min(150.0)
+    };
+    let cols = (3..=6).max_by(|&a, &b| size(a).total_cmp(&size(b)).then(b.cmp(&a))).unwrap_or(4);
+    let card_w = size(cols);
+    let grid_w = cols as f32 * card_w + (cols - 1) as f32 * gap;
+    WardrobeLayout {
+        back,
+        title,
+        preview,
+        tabs: tab_rects,
+        grid: Rect::new(area.x + (area.w - grid_w) / 2.0, area.y, grid_w, area.h),
+        card: (card_w, card_w * 1.2),
+        cols,
+        gap,
+        info,
     }
 }
 
