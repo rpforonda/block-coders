@@ -299,8 +299,14 @@ the next world. Retries are unlimited.
   the checks they skipped. The last world (Nether Fortress) needs **all** checks
   passed, even for those older saves. One exception: the Counting Caverns world
   (and its check) came later, so a player who had already reached the Nether
-  Fortress and passed the five checks there were then keeps it. A check opens
-  once the world's last level is beaten. Parent mode (Ctrl+U) opens everything.
+  Fortress and passed the five checks there were then keeps it. Parent mode
+  (Ctrl+U) opens everything.
+- **Skipping ahead:** a world's check can be taken as soon as the world is
+  open, before its levels, so a kid who already knows the idea can test out.
+  Passing opens the next world's first level (a world's first level opens with
+  its world). The levels they skipped open the usual way, once a later level is
+  beaten. Taken early, the intro says it's fine to skip ahead, and not passing
+  points them to the world's levels.
 - `check.rs` has the screen, plus read-only drawing of programs and maps. Map
   squares that change between versions show their symbol with a legend
   ("? = stone or empty").
@@ -433,8 +439,9 @@ rectangles (a test checks them).
   about 14pt rather than 15. Screens under 360 points wide (older than today's
   phones) are best effort: everything fits, but panels are cramped.
 - Text that might not fit steps down a little, never below 16px: titles,
-  palette labels, Bit's long messages, and the Rust view (down to 11px, so the
-  widest line fits), and RUN AGAIN (down to 20px). The info bar shortens its
+  palette labels, Bit's long messages, the level screen's bottom line, and the
+  Rust view (down to 11px, so the widest line fits), and RUN AGAIN (down to
+  20px). The info bar shortens its
   labels when narrow, and popups shrink to the canvas and stack their buttons
   when narrow. Where any speed's label is too wide for the Speed button, every
   speed goes on a second line under "Speed:", so the label keeps its shape as
@@ -584,8 +591,9 @@ user-<id>.txt    gen;<n>                 how many times this player started over
 - **Saved by level name, not number**, so levels can be inserted or reordered
   freely. Older saves that numbered levels 0–19 are converted on load using
   `LEGACY_ORDER`. An even older single-player `progress.txt` becomes "Player 1".
-- **Unlocking:** level *i* is open if it's level 1, or if *i* ≤ (furthest level
-  with stars) + 1, and its world is open (see [World Checks](#world-checks)).
+- **Unlocking:** level *i* is open if it's the first level of its world, or if
+  *i* ≤ (furthest level with stars) + 1, and its world is open (see
+  [World Checks](#world-checks)).
   So beating a level opens everything before it, and new levels added early in
   the list never lock out a player who already went further.
 - **Writes happen on every program edit and every win.** The files are tiny, and
@@ -658,6 +666,7 @@ symbols stripped), checks portability, writes the icon (`block-coders
 | `world_checks::retries_get_new_questions` | 10 different questions per attempt, at least 3 new on every retry |
 | `world_checks::choices_are_shown_in_a_random_order` | The right answer is shown in each place about equally often, and every order of the choices comes up |
 | `world_checks::checks_gate_the_next_world` | Check unlock rules, old saves, the last world needing every check |
+| `world_checks::a_check_can_be_taken_early` | A world's check opens with the world; passing it opens the next world's first level, and skipped levels open once a later one is beaten |
 | `world_checks::check_results_are_saved` | Check results round-trip, and hand-edited entries are cleaned |
 
 **Screenshot autopilot** (development only: debug builds read these settings,
@@ -707,6 +716,7 @@ screenshots don't show real players' names.
 | Verify wins on 80 other seeds | Trust a single run | Without it, kids could pass a dynamic level by luck and learn the wrong lesson. |
 | Plain-text save files | JSON/serde | Zero dependencies, human-readable, easy for a parent to back up or inspect. |
 | Bit spots a block that ends both parts of an IF / ELSE, before "Check your REPEAT numbers" | No such hint; after the REPEAT hint; last | A player's 12-block "Both Sides" (3 stars at 11) turned back the same way in both parts of each IF / ELSE. Bit only said "Check your REPEAT numbers", and following that made 13 blocks. TypeSafe chose adding the hint (0.97; helps 0.83, could mislead 0.27), putting it first (0.86), and wording with the TOP and BOTTOM parts the IF / ELSE intro teaches (0.57, against 0.32 and 0.11). An extra tip that an empty BOTTOM part works like a plain IF scored 0.47 and was left out. |
+| A world's World Check can be taken as soon as the world opens; passing opens the next world's first level | Only after the world's last level; any check at any time; also opening the rest of this world, or the whole next world | The owner asked for kids to take the assessment ahead of time to unlock levels. TypeSafe chose taking a check once its world is open (0.96, against 0.03 after the intro level and 0.01 any time) and opening only the next world's first level (0.55, against 0.29 for this world's levels too and 0.16 for the whole next world), so skipped levels follow the usual rule. Wording: "You haven't finished this world's levels yet, and that's OK!" in the intro (0.62), "You can take it before finishing the levels!" on the tile (0.45), and "the levels in this world teach everything on the check" after not passing (0.40). |
 
 ## Limitations and future work
 

@@ -259,12 +259,19 @@ fn check_tile(ui: &mut Ui, progress: &Progress, world: usize, b: Rect) -> (bool,
     let size = fit_size(label, b.w - 8.0, 22.0 * t.max(0.75), 14.0);
     text_centered(label, Rect::new(b.x, b.y + 100.0 * t, b.w, 30.0 * t), size, ink, ink == WHITE);
     let info = ui.hover(b).then(|| {
+        let concept = CHAPTERS[world].concept.to_lowercase();
         if !open {
-            "World Check: beat every level in this world first.".to_string()
+            "World Check: open this world first.".to_string()
         } else if passed {
             "World Check passed! Take it again any time for practice.".to_string()
+        } else if !progress.finished_world(world) {
+            // Wording picked with TypeSafe (see docs/DESIGN.md).
+            format!(
+                "World Check: answer {} questions about {concept} to move on. You can take it before finishing the levels!",
+                check::ASKED
+            )
         } else {
-            format!("World Check: answer {} questions about {} to move on.", check::ASKED, CHAPTERS[world].concept.to_lowercase())
+            format!("World Check: answer {} questions about {concept} to move on.", check::ASKED)
         }
     });
     (clicked && open, info)
@@ -402,7 +409,8 @@ fn select_screen(
         }
         check_info = info;
     }
-    text_centered(&level_info(hovered, check_info), l.info, 24.0, WHITE, true);
+    let info = level_info(hovered, check_info);
+    text_centered(&info, l.info, fit_size(&info, l.info.w - 24.0, 24.0, 16.0), WHITE, true);
     out
 }
 
